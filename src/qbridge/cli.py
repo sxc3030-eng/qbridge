@@ -47,6 +47,15 @@ EXIT_ERROR = 3
 inconnus. Distinct de 1 et 2 pour qu'un script sache separer « le harnais n'a
 pas pu travailler » de « le harnais a travaille et le resultat est mauvais »."""
 
+EXIT_INDETERMINATE = 4
+"""Reserve a `replay` : verdict INDETERMINATE.
+
+Code distinct de 1 et de 2 a dessein. « Aucun test ne peut conclure dans ce
+regime » n'est ni un avertissement statistique (1, ou le test a conclu qu'on
+est compatible) ni une divergence (2, ou le test a conclu qu'on ne l'est pas).
+Le confondre avec l'un des deux ferait exactement l'erreur que le verdict a ete
+ajoute pour empecher."""
+
 _LABEL_WIDTH = 22
 
 
@@ -358,7 +367,13 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 
 
 def _exit_code_for(verdict: Any) -> int:
-    """Traduit un verdict en code de sortie POSIX."""
+    """Traduit un verdict en code de sortie POSIX.
+
+    Le repli est EXIT_ERROR et non EXIT_OK, deliberement : un verdict que cette
+    table ne connait pas est un verdict que l'appelant ne peut pas interpreter.
+    Le faire tomber sur 0 signalerait une reussite qui n'a pas ete constatee —
+    et un script d'integration continue le croirait.
+    """
     from qbridge.verdict import Verdict
 
     return {
@@ -366,7 +381,8 @@ def _exit_code_for(verdict: Any) -> int:
         Verdict.NUMERICALLY_EQUIVALENT: EXIT_OK,
         Verdict.STATISTICALLY_COMPATIBLE: EXIT_MISMATCH,
         Verdict.DIVERGENT: EXIT_DIVERGENT,
-    }[verdict]
+        Verdict.INDETERMINATE: EXIT_INDETERMINATE,
+    }.get(verdict, EXIT_ERROR)
 
 
 def _cmd_replay(args: argparse.Namespace) -> int:

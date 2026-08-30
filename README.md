@@ -63,6 +63,47 @@ Les bitstrings bruts sont **la seule donnée non regénérable** de toute la cha
 tels quels, jamais agrégés : les agrégats se recalculent, les tirages non. Une
 archive de 500 tirages sur un état de Bell pèse 3,1 Ko.
 
+## Ligne de commande
+
+```bash
+qbridge capture circuit.json --seed 7 --repetitions 300 --option cpu_threads=4 --out runs/essai
+```
+
+```bash
+qbridge verify runs/essai
+```
+
+Puis `qbridge replay`, `qbridge info` et `qbridge diff` (tous acceptent `--json`).
+`verify`, `info` et `diff` n'exécutent **aucun circuit** — c'est vérifié par des
+tests qui cassent volontairement les deux backends.
+
+Codes de sortie : `0` conforme · `1` compatible seulement statistiquement ·
+`2` divergent · `3` erreur · `4` indéterminé. Un verdict que la table ne connaît
+pas retombe sur `3`, jamais sur `0` : une CI croirait à une réussite.
+
+## Capture du versant classique
+
+Un vrai calcul quantique est une boucle hybride : du code classique construit le
+circuit, du code classique interprète les tirages. Sceller le milieu ne suffit
+pas.
+
+```python
+ctx = capture_classical(callables={"reduce": ma_reduction}, input_data=probleme)
+...
+rapport = verify_source_unchanged(ctx, {"reduce": ma_reduction})
+rapport.has_drift   # True si le code a change depuis le scellement
+```
+
+Chaque champ porte un **marqueur de preuve** — `captured`, `derived`,
+`unavailable`, `not_applicable` — parce qu'un champ absent est autrement
+ambigu entre « non capturé », « inapplicable » et « capture échouée ». Une
+fonction définie dans un REPL ou un builtin est enregistrée `unavailable` avec
+sa cause, jamais silencieusement ignorée.
+
+C'est ce qui complète la garantie archivistique : tirages bruts + code de
+réduction + environnement épinglé = tous les chiffres publiés regénérables,
+sans aucune ressource quantique.
+
 ## Ce qui rend ce harnais différent
 
 `Backend` est un protocole abstrait. Aujourd'hui il est implémenté par `qsim` et
@@ -154,10 +195,10 @@ disponible.
 - `HardwareBackend` et l'intégration de snapshots de calibration réels
 - ~~Rejeu archivistique~~ — **fait en v0.2** (`verify_archival`, `replay_record`)
 - Export vers OpenQASM 3 / QIR
-- Capture du pré/post-traitement classique
+- ~~Capture du pré/post-traitement classique~~ — **fait** (`capture_classical`), pas encore intégrée au `Manifest`
 - Compression du `circuit_json` (180 Ko pour 20 qubits × depth 16)
 - Mode `EXPECTATION` de bout en bout (classé, mais pas encore dans `capture`)
-- Interface en ligne de commande
+- ~~Interface en ligne de commande~~ — **faite** (`qbridge capture/verify/replay/info/diff`)
 
 ## État de l'art
 

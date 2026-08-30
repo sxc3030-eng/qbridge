@@ -9,6 +9,9 @@ description = "Harnais de capture/replay deterministe pour executions de circuit
 requires-python = ">=3.11"
 dependencies = ["cirq>=1.7", "qsimcirq>=0.22", "numpy>=1.26"]
 
+[project.scripts]
+qbridge = "qbridge.cli:cli_entry_point"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
