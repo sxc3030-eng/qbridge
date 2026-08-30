@@ -19,6 +19,29 @@ from qbridge.verdict import (
 )
 
 
+def _plafonner_selon_le_backend(
+    comparaison: ComparisonResult, impl: Any
+) -> ComparisonResult:
+    """Empeche un backend non deterministe d'annoncer un verdict trop fort.
+
+    Un backend materiel ne peut PAS reproduire un resultat bit-pour-bit : le
+    bruit physique n'est pas rejouable. S'il ressort BIT_EXACT, c'est un
+    artefact, pas une preuve. On plafonne a STATISTICALLY_COMPATIBLE.
+    """
+    if impl.is_bit_exact_replayable():
+        return comparaison
+    if comparaison.verdict >= Verdict.STATISTICALLY_COMPATIBLE:
+        return comparaison
+    return ComparisonResult(
+        Verdict.STATISTICALLY_COMPATIBLE,
+        f"{comparaison.detail} (plafonne : le backend {impl.name} ne garantit "
+        "pas la reproductibilite bit-pour-bit)",
+        infidelity=comparaison.infidelity,
+        p_value=comparaison.p_value,
+        max_abs_delta=comparaison.max_abs_delta,
+    )
+
+
 @dataclass(frozen=True)
 class ReplayReport:
     verdict: Verdict
@@ -31,14 +54,9 @@ class ReplayReport:
 
 
 def _verifier_integrite(manifest: Manifest) -> None:
-    """Refuse un manifeste dont le hash ne correspond plus au contenu."""
-    attendu = manifest._compute_semantic_hash()
-    if attendu != manifest.semantic_hash:
-        raise ValueError(
-            "Echec du controle d'integrite : le manifeste a ete modifie. "
-            f"hash stocke={manifest.semantic_hash[:16]}... "
-            f"hash recalcule={attendu[:16]}..."
-        )
+    """Refuse un manifeste incoherent. Delegue a `Manifest.verify_self`, qui
+    controle le circuit, le placement des options par seau, et le hash."""
+    manifest.verify_self()
 
 
 def _derive_environnement(manifest: Manifest) -> Dict[str, Any]:
@@ -57,6 +75,18 @@ def replay(
     override_performance: Optional[Dict[str, Any]] = None,
 ) -> ReplayReport:
     """Rejoue l'execution decrite par `manifest`.
+
+    AVERTISSEMENT — cette fonction prouve moins qu'il n'y parait.
+
+    Elle re-execute la capture d'origine pour obtenir sa reference. Dans le cas
+    par defaut c'est donc la MEME fonction, avec les MEMES arguments, dans le
+    MEME processus, a quelques microsecondes d'intervalle : elle mesure le
+    determinisme de qsim, pas la conformite au resultat d'origine. Tout bug
+    present des deux cotes reste invisible.
+
+    Pour une comparaison qui prouve quelque chose sur la duree, archiver un
+    `RunRecord` et utiliser `replay_record()`, dont la reference vient du
+    disque.
 
     `override_performance` ne peut contenir que des options qui sont de niveau
     PERFORMANCE POUR LE MODE DU MANIFESTE. C'est ce qui permet de rejouer sur
@@ -116,6 +146,7 @@ def replay(
     else:
         comparaison = compare_samples(origine.samples, rejoue)
 
+    comparaison = _plafonner_selon_le_backend(comparaison, impl)
     return ReplayReport(
         verdict=comparaison.verdict,
         detail=comparaison.detail,
@@ -148,15 +179,34 @@ def verify_archival(record: "RunRecord") -> ArchivalReport:
 
     Ne peut pas echouer faute de materiel. C'est le point.
     """
+    # Les deux controles sont faits SEPAREMENT : cette fonction sert a
+    # l'attribution medico-legale. Dire "le manifeste a ete falsifie" alors que
+    # c'est l'archive des tirages qui l'est enverrait sur une fausse piste.
+    manifeste_ok, resultats_ok = True, True
+    motifs = []
     try:
-        record.verify_integrity()
+        record.manifest.verify_self()
     except ValueError as e:
+        manifeste_ok = False
+        motifs.append(f"manifeste : {e}")
+
+    if record.samples is not None:
+        from qbridge.capture import hash_samples
+
+        if hash_samples(record.samples) != record.result_hash:
+            resultats_ok = False
+            motifs.append(
+                "resultats : les bitstrings archives ne correspondent pas au "
+                f"hash scelle ({record.result_hash[:16]}...)"
+            )
+
+    if motifs:
         return ArchivalReport(
-            manifest_intact=False,
-            results_intact=False,
-            measurement_keys=[],
+            manifest_intact=manifeste_ok,
+            results_intact=resultats_ok,
+            measurement_keys=sorted(record.samples) if record.samples else [],
             total_shots=0,
-            detail=str(e),
+            detail=" | ".join(motifs),
         )
 
     cles = sorted(record.samples) if record.samples else []
@@ -243,6 +293,7 @@ def replay_record(
         )
         comparaison = compare_samples(record.samples, rejoue)
 
+    comparaison = _plafonner_selon_le_backend(comparaison, impl)
     return ReplayReport(
         verdict=comparaison.verdict,
         detail=comparaison.detail,

@@ -62,13 +62,7 @@ class RunRecord:
         Ne consomme AUCUNE ressource quantique : on recalcule le hash a partir
         des octets stockes et on le compare a celui qui a ete scelle.
         """
-        attendu = self.manifest._compute_semantic_hash()
-        if attendu != self.manifest.semantic_hash:
-            raise ValueError(
-                "Echec du controle d'integrite du manifeste : il a ete modifie. "
-                f"hash stocke={self.manifest.semantic_hash[:16]}... "
-                f"hash recalcule={attendu[:16]}..."
-            )
+        self.manifest.verify_self()
         if self.samples is not None:
             recalcule = hash_samples(self.samples)
             if recalcule != self.result_hash:

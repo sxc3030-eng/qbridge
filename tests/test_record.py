@@ -116,7 +116,12 @@ def test_verify_archival_signale_une_falsification_sans_lever():
         state_vector_hash=r.state_vector_hash,
     )
     rapport = verify_archival(altere)
-    assert rapport.manifest_intact is False and rapport.results_intact is False
+    # Attribution : c'est l'ARCHIVE des tirages qui est corrompue, pas le
+    # manifeste. Confondre les deux enverrait sur une fausse piste — et c'est
+    # tout l'interet d'une fonction medico-legale.
+    assert rapport.manifest_intact is True
+    assert rapport.results_intact is False
+    assert "resultats" in rapport.detail and "manifeste" not in rapport.detail
 
 
 def test_verify_archival_n_execute_aucun_circuit(monkeypatch, tmp_path):

@@ -27,14 +27,34 @@ CHI2_ALPHA = 0.001
 """Seuil de p-value. Volontairement bas : on veut detecter une vraie
 divergence, pas signaler du bruit d'echantillonnage normal."""
 
+MIN_EXPECTED_COUNT = 5.0
+"""Effectif attendu minimal par categorie pour que le chi2 soit valide.
+
+Regle classique. Sans elle le test est un piege : a 20 qubits avec 200 tirages,
+presque chaque bitstring est unique, chaque categorie contribue 1.0 au chi2 avec
+ddl = categories-1, donc p tend vers 0.5 QUELLES QUE SOIENT les donnees. Mesure :
+deux jeux de tirages totalement independants a 20 qubits ressortaient
+'compatibles' avec p=0.476, et l'ecart mesure entre cpu_threads=1 et 4 en mode
+midcircuit ressortait 'compatible' avec p=1.0.
+
+Ce n'est pas un defaut du chi2 : avec 200 tirages sur 2^20 issues possibles,
+AUCUN test ne peut distinguer deux distributions. C'est une limite de complexite
+d'echantillonnage. La seule reponse honnete est de refuser de conclure."""
+
 
 class Verdict(IntEnum):
-    """Du plus fort au plus faible. L'ordre entier permet de comparer."""
+    """Du plus fort au plus faible.
+
+    `INDETERMINATE` est place APRES `DIVERGENT` pour que les comparaisons du
+    type `verdict <= NUMERICALLY_EQUIVALENT` ne l'acceptent jamais : ne pas
+    pouvoir conclure n'est pas une reussite.
+    """
 
     BIT_EXACT = 0
     NUMERICALLY_EQUIVALENT = 1
     STATISTICALLY_COMPATIBLE = 2
     DIVERGENT = 3
+    INDETERMINATE = 4
 
 
 @dataclass(frozen=True)
@@ -91,7 +111,10 @@ def bitstring_counts(samples: np.ndarray) -> Dict[int, int]:
     arr = np.asarray(samples)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)
-    poids = 1 << np.arange(arr.shape[1] - 1, -1, -1)
+    # dtype=int64 explicite : sous numpy 1.x sur Windows, arange rend de l'int32
+    # et le decalage deborde silencieusement au-dela de 31 qubits, corrompant
+    # les comptages et donc tous les verdicts qui en dependent.
+    poids = np.int64(1) << np.arange(arr.shape[1] - 1, -1, -1, dtype=np.int64)
     valeurs = (arr.astype(np.int64) * poids).sum(axis=1)
     uniques, comptes = np.unique(valeurs, return_counts=True)
     return {int(u): int(c) for u, c in zip(uniques, comptes)}
@@ -177,10 +200,36 @@ def compare_samples(
             Verdict.DIVERGENT,
             f"cles de mesure differentes : {sorted(a)} vs {sorted(b)}",
         )
-    if all(a[k].shape == b[k].shape and a[k].tobytes() == b[k].tobytes() for k in a):
+    if all(
+        a[k].shape == b[k].shape
+        and a[k].dtype == b[k].dtype
+        and a[k].tobytes() == b[k].tobytes()
+        for k in a
+    ):
         return ComparisonResult(Verdict.BIT_EXACT, "echantillons identiques")
 
-    p_min, cle_min = 1.0, ""
+    # Garde du regime clairseme. A verifier AVANT de conclure quoi que ce soit :
+    # sans elle le chi2 certifie 'compatibles' deux jeux sans aucun rapport.
+    for k in sorted(a):
+        comptes_a = bitstring_counts(a[k])
+        comptes_b = bitstring_counts(b[k])
+        categories = len(set(comptes_a) | set(comptes_b))
+        tirages = min(sum(comptes_a.values()), sum(comptes_b.values()))
+        if categories == 0:
+            continue
+        attendu_moyen = tirages / categories
+        if attendu_moyen < MIN_EXPECTED_COUNT:
+            requis = int(categories * MIN_EXPECTED_COUNT)
+            return ComparisonResult(
+                Verdict.INDETERMINATE,
+                f"cle {k!r} : {categories} bitstrings distincts pour {tirages} "
+                f"tirages (effectif attendu {attendu_moyen:.2f} < "
+                f"{MIN_EXPECTED_COUNT:g}). Aucun test statistique ne peut "
+                f"conclure dans ce regime ; il faudrait au moins {requis} "
+                "tirages. Les echantillons ne sont PAS identiques.",
+            )
+
+    p_min, cle_min = 2.0, sorted(a)[0] if a else ""
     for k in sorted(a):
         p = chi2_homogeneity_pvalue(bitstring_counts(a[k]), bitstring_counts(b[k]))
         if p < p_min:

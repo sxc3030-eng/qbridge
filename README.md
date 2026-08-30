@@ -19,7 +19,16 @@ rapport.verdict                                  # BIT_EXACT
 
 Le manifeste est un JSON autonome : circuit sérialisé, seed, mode d'exécution,
 options réparties par niveau d'influence, noyau SIMD, empreinte d'environnement,
-et un hash sémantique qui détecte toute falsification.
+et un hash sémantique.
+
+> **Portée exacte du hash — à ne pas surestimer.** Le hash sémantique est
+> **non signé** : il est public et déterministe, donc quiconque modifie le
+> fichier peut le recalculer en deux lignes. Il détecte une **corruption ou une
+> altération accidentelle**, ainsi qu'une modification faite sans connaître
+> l'outil. Il ne détecte **pas** un adversaire délibéré. Pour ça il faudrait une
+> signature (HMAC avec clé, ou ed25519 sur le JSON canonique) — non implémenté,
+> et c'est la première chose à ajouter si l'archive doit servir de preuve
+> opposable.
 
 ## Les trois garanties
 

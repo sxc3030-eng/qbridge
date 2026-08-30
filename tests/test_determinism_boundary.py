@@ -11,6 +11,7 @@ import pytest
 import qsimcirq
 
 from qbridge.digest import sha256_of_array
+from qbridge.verdict import INFIDELITY_TOLERANCE
 
 
 @pytest.fixture(scope="module")
@@ -37,7 +38,7 @@ def _sv(circuit, **opts):
     return sim.simulate(circuit).state_vector()
 
 
-@pytest.mark.parametrize("threads", [1, 2, 4, 8])
+@pytest.mark.parametrize("threads", [2, 4, 8, 16])
 def test_cpu_threads_ne_change_pas_le_vecteur_detat(circuit, threads):
     """FAIT : cpu_threads est neutre pour l'application de portes."""
     ref = sha256_of_array(_sv(circuit, cpu_threads=1, max_fused_gate_size=2))
@@ -58,9 +59,87 @@ def test_cpu_threads_change_les_mesures_intermediaires(circuit_midcircuit):
             sim.run(circuit_midcircuit, repetitions=200).measurements["fin"]
         )
 
+    # CONTROLE, indispensable : sans lui ce test ne distingue pas "le nombre de
+    # threads fait partie de l'algorithme de mesure" de "le resultat est
+    # simplement non deterministe". Si qsim devenait non deterministe par
+    # appel, l'assertion principale passerait encore alors que le fait qu'elle
+    # verrouille se serait evapore.
+    assert ech(1) == ech(1), "a seed fixe, qsim doit etre deterministe"
+    assert ech(4) == ech(4), "a seed fixe, qsim doit etre deterministe"
+
     assert ech(1) != ech(4), (
-        "cpu_threads n'affecte plus les mesures intermediaires : il pourrait "
-        "etre reclasse en PERFORMANCE pour MIDCIRCUIT_SAMPLING."
+        "cpu_threads n'affecte plus les mesures intermediaires. NE PAS "
+        "reclasser en PERFORMANCE sur la foi de ce seul echec : verifier "
+        "d'abord qu'OpenMP est actif sur cette machine (voir "
+        "test_openmp_est_bien_actif). Un threading inerte produit le meme "
+        "symptome pour une raison opposee."
+    )
+
+
+def test_openmp_est_bien_actif(circuit):
+    """Garde-fou pour le test precedent.
+
+    Toute la table OPTION_TIERS repose sur des mesures faites avec OpenMP
+    actif. `lib/formux.h` de qsim n'active ParallelFor que `#ifdef _OPENMP` :
+    sur une build sans OpenMP, `cpu_threads` est INERTE et toutes les
+    neutralites constatees seraient vides de sens.
+    """
+    import time
+
+    def duree(t):
+        sim = qsimcirq.QSimSimulator(qsimcirq.QSimOptions(cpu_threads=t))
+        d = time.perf_counter()
+        sim.simulate(circuit)
+        return time.perf_counter() - d
+
+    lent = min(duree(1) for _ in range(3))
+    rapide = min(duree(8) for _ in range(3))
+    assert lent / rapide > 1.2, (
+        f"aucun gain mesurable entre 1 et 8 threads ({lent:.4f}s vs "
+        f"{rapide:.4f}s) : OpenMP semble inactif, donc les resultats de "
+        "neutralite de cpu_threads ne prouvent rien."
+    )
+
+
+def test_cpu_threads_est_neutre_en_echantillonnage_terminal():
+    """FAIT : c'est la classification PERFORMANCE la plus risquee de la table,
+    puisqu'elle porte sur de l'ECHANTILLONNAGE. Elle etait non verrouillee."""
+    q = cirq.LineQubit.range(20)
+    c = cirq.Circuit([cirq.H(x) for x in q] + [cirq.measure(*q, key="m")])
+    assert c.are_all_measurements_terminal()
+
+    def ech(t):
+        sim = qsimcirq.QSimSimulator(qsimcirq.QSimOptions(cpu_threads=t), seed=5)
+        return sha256_of_array(sim.run(c, repetitions=200).measurements["m"])
+
+    ref = ech(1)
+    for t in (2, 4, 8):
+        assert ech(t) == ref, (
+            f"cpu_threads={t} change l'echantillonnage terminal : OPTION_TIERS "
+            "le classe en PERFORMANCE pour TERMINAL_SAMPLING, ce n'est plus vrai."
+        )
+
+
+def test_une_seule_repetition_reste_neutre_aux_threads():
+    """MESURE CONTRAIRE, documentee volontairement.
+
+    `detect_mode` verrouille `repetitions == 1` en MIDCIRCUIT_SAMPLING parce
+    que qsim bascule sur un autre chemin C++. Mesure : `cpu_threads` y est en
+    fait NEUTRE. Le verrou est donc conservateur au-dela de ce que la mesure
+    exige — c'est un choix assume (sur-verrouiller ne produit jamais un faux
+    BIT_EXACT ; sous-verrouiller si), pas un fait etabli. Ce test existe pour
+    que ce choix reste visible et ne se transforme pas en croyance.
+    """
+    q = cirq.LineQubit.range(20)
+    c = cirq.Circuit([cirq.H(x) for x in q] + [cirq.measure(*q, key="m")])
+
+    def ech(t):
+        sim = qsimcirq.QSimSimulator(qsimcirq.QSimOptions(cpu_threads=t), seed=5)
+        return sha256_of_array(sim.run(c, repetitions=1).measurements["m"])
+
+    assert ech(1) == ech(4), (
+        "cpu_threads affecte desormais repetitions==1 : le verrou conservateur "
+        "de detect_mode est devenu une necessite mesuree, mettre a jour la note."
     )
 
 
@@ -77,7 +156,12 @@ def test_l_ecart_du_a_la_fusion_reste_un_arrondi(circuit):
     a = _sv(circuit, cpu_threads=1, max_fused_gate_size=2)
     b = _sv(circuit, cpu_threads=1, max_fused_gate_size=4)
     infidelite = abs(1.0 - abs(np.vdot(a, b)) ** 2)
-    assert infidelite < 1e-4, f"infidelite {infidelite:.3e} trop grande pour un arrondi"
+    # On importe la constante plutot que de la recopier : sinon resserrer
+    # INFIDELITY_TOLERANCE dans verdict.py laisserait ce test inchange, et la
+    # calibration qu'il pretend verifier ne serait plus verifiee.
+    assert infidelite < INFIDELITY_TOLERANCE, (
+        f"infidelite {infidelite:.3e} trop grande pour un simple arrondi"
+    )
     assert np.abs(a - b).max() < 1e-6
 
 

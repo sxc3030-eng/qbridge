@@ -74,7 +74,7 @@ def main() -> None:
     except ValueError as e:
         print(f"  surcharge refusee : {e}")
 
-    bandeau("6. Detection d'un manifeste falsifie")
+    bandeau("6. Detection d'une alteration du manifeste (hash NON signe)")
     import json
 
     data = json.loads(chemin.read_text(encoding="utf-8"))
@@ -83,9 +83,11 @@ def main() -> None:
     falsifie.write_text(json.dumps(data), encoding="utf-8")
     try:
         replay(Manifest.load(falsifie))
-        print("  !! la falsification n'a pas ete detectee")
+        print("  !! l'alteration n'a pas ete detectee")
     except ValueError as e:
         print(f"  refuse : {e}")
+    print("  NB : le hash n'est pas signe. Il detecte une corruption, pas un")
+    print("       adversaire — celui-ci recalculerait le hash apres coup.")
 
     bandeau("7. Archive complete : la recette PLUS les tirages bruts")
     run_arch = capture(

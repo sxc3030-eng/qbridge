@@ -32,6 +32,12 @@ class ExecutionMode(str, Enum):
 def detect_mode(circuit: cirq.Circuit, *, repetitions: Optional[int]) -> ExecutionMode:
     """Determine le mode d'execution a partir du circuit et des repetitions."""
     if repetitions is None:
+        # `simulate()` sur un circuit qui mesure ECHANTILLONNE bel et bien ces
+        # mesures et effondre l'etat : classer ce cas en STATE_VECTOR
+        # rendrait `cpu_threads` surchargeable sur un resultat qui depend de
+        # tirages. On retombe sur le mode le plus strict.
+        if circuit.has_measurements():
+            return ExecutionMode.MIDCIRCUIT_SAMPLING
         return ExecutionMode.STATE_VECTOR
     if repetitions < 1:
         raise ValueError(f"repetitions doit valoir au moins 1, recu {repetitions}")
