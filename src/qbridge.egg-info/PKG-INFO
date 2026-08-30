@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: qbridge
-Version: 0.1.0
-Summary: Harnais de capture/replay deterministe pour executions de circuits quantiques
-Requires-Python: >=3.11
-Requires-Dist: cirq>=1.7
-Requires-Dist: qsimcirq>=0.22
-Requires-Dist: numpy>=1.26
