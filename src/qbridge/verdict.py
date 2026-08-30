@@ -86,7 +86,7 @@ def compare_state_vectors(a: np.ndarray, b: np.ndarray) -> ComparisonResult:
     )
 
 
-def _bitstring_counts(samples: np.ndarray) -> Dict[int, int]:
+def bitstring_counts(samples: np.ndarray) -> Dict[int, int]:
     """Convertit un tableau (repetitions, n_qubits) en comptage par entier."""
     arr = np.asarray(samples)
     if arr.ndim == 1:
@@ -182,7 +182,7 @@ def compare_samples(
 
     p_min, cle_min = 1.0, ""
     for k in sorted(a):
-        p = chi2_homogeneity_pvalue(_bitstring_counts(a[k]), _bitstring_counts(b[k]))
+        p = chi2_homogeneity_pvalue(bitstring_counts(a[k]), bitstring_counts(b[k]))
         if p < p_min:
             p_min, cle_min = p, k
     if p_min >= CHI2_ALPHA:

@@ -9,6 +9,7 @@ from qbridge.backends import BACKENDS
 from qbridge.capture import capture
 from qbridge.fingerprint import environment_fingerprint, kernel_fingerprint
 from qbridge.manifest import Manifest
+from qbridge.record import RunRecord
 from qbridge.tiers import Tier, split_options
 from qbridge.verdict import (
     ComparisonResult,
@@ -114,6 +115,133 @@ def replay(
         comparaison = compare_state_vectors(origine.state_vector, rejoue)
     else:
         comparaison = compare_samples(origine.samples, rejoue)
+
+    return ReplayReport(
+        verdict=comparaison.verdict,
+        detail=comparaison.detail,
+        comparison=comparaison,
+        original_backend=manifest.backend_name,
+        replay_backend=nom,
+        kernel_changed=kernel_fingerprint() != manifest.kernel,
+        environment_drift=_derive_environnement(manifest),
+    )
+
+
+@dataclass(frozen=True)
+class ArchivalReport:
+    """Resultat d'une verification archivistique — zero ressource quantique."""
+
+    manifest_intact: bool
+    results_intact: bool
+    measurement_keys: list
+    total_shots: int
+    detail: str
+
+
+def verify_archival(record: "RunRecord") -> ArchivalReport:
+    """Verifie un enregistrement SANS executer quoi que ce soit.
+
+    C'est la garantie qui sera reellement exercee dans cinq ans : prouver que
+    les bitstrings archives sont bien ceux qui ont ete scelles, et pouvoir en
+    recalculer tous les agregats publies — sans simulateur, sans machine
+    quantique, sans meme qsim installe.
+
+    Ne peut pas echouer faute de materiel. C'est le point.
+    """
+    try:
+        record.verify_integrity()
+    except ValueError as e:
+        return ArchivalReport(
+            manifest_intact=False,
+            results_intact=False,
+            measurement_keys=[],
+            total_shots=0,
+            detail=str(e),
+        )
+
+    cles = sorted(record.samples) if record.samples else []
+    tirages = (
+        sum(int(record.samples[k].shape[0]) for k in cles) if record.samples else 0
+    )
+    return ArchivalReport(
+        manifest_intact=True,
+        results_intact=True,
+        measurement_keys=cles,
+        total_shots=tirages,
+        detail=(
+            f"{len(cles)} cle(s) de mesure, {tirages} tirages archives, "
+            "hashes conformes"
+        ),
+    )
+
+
+def replay_record(
+    record: "RunRecord",
+    *,
+    backend: Optional[str] = None,
+    override_performance: Optional[Dict[str, Any]] = None,
+) -> ReplayReport:
+    """Rejoue et compare au RESULTAT ARCHIVE, pas a une re-execution.
+
+    Difference essentielle avec `replay(manifest)` : celui-la re-execute la
+    capture d'origine pour obtenir sa reference, ce qui ne peut pas detecter un
+    bug present dans les DEUX executions. Ici la reference vient du disque,
+    scellee avant. C'est la seule des deux comparaisons qui prouve quelque
+    chose sur la duree.
+    """
+    record.verify_integrity()
+    manifest = record.manifest
+
+    nom = backend or manifest.backend_name
+    if nom not in BACKENDS:
+        raise KeyError(f"Backend inconnu : {nom!r}. Disponibles : {sorted(BACKENDS)}")
+
+    mode = manifest.execution_mode()
+    options = dict(manifest.all_options())
+
+    if override_performance:
+        parts = split_options(override_performance, mode)
+        interdits = {**parts[Tier.SEMANTIC], **parts[Tier.NUMERIC]}
+        if interdits:
+            raise ValueError(
+                f"En mode {mode.value}, ces options ne sont pas de niveau "
+                f"PERFORMANCE et ne peuvent pas etre surchargees : {sorted(interdits)}"
+            )
+        options.update(override_performance)
+
+    if nom == "cirq-reference":
+        options = {}
+
+    impl = BACKENDS[nom]()
+    circuit = manifest.circuit()
+    bruit = manifest.noise()
+
+    if manifest.repetitions is None:
+        rejoue = impl.simulate(circuit, seed=manifest.seed, options=options, noise=bruit)
+        # Le vecteur d'origine n'est pas archive (2^n * 8 octets). On ne dispose
+        # que de son hash : la comparaison est donc binaire, sans mesure de
+        # l'ecart. C'est une limite assumee, pas un oubli.
+        from qbridge.digest import sha256_of_array
+
+        identique = sha256_of_array(rejoue) == record.state_vector_hash
+        comparaison = ComparisonResult(
+            Verdict.BIT_EXACT if identique else Verdict.DIVERGENT,
+            (
+                "hash du vecteur d'etat conforme a l'archive"
+                if identique
+                else "hash du vecteur d'etat different de l'archive ; l'ecart fin "
+                "est incalculable, le vecteur d'origine n'est pas archive"
+            ),
+        )
+    else:
+        rejoue = impl.sample(
+            circuit,
+            repetitions=manifest.repetitions,
+            seed=manifest.seed,
+            options=options,
+            noise=bruit,
+        )
+        comparaison = compare_samples(record.samples, rejoue)
 
     return ReplayReport(
         verdict=comparaison.verdict,

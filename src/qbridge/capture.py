@@ -23,7 +23,7 @@ class CaptureRun:
     result_hash: str
 
 
-def _hash_samples(samples: Dict[str, np.ndarray]) -> str:
+def hash_samples(samples: Dict[str, np.ndarray]) -> str:
     return sha256_of_text(
         "".join(f"{k}:{sha256_of_array(samples[k])}" for k in sorted(samples))
     )
@@ -67,4 +67,4 @@ def capture(
     samples = impl.sample(
         circuit, repetitions=repetitions, seed=seed, options=options, noise=noise
     )
-    return CaptureRun(manifest, None, samples, _hash_samples(samples))
+    return CaptureRun(manifest, None, samples, hash_samples(samples))
