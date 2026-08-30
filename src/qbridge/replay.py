@@ -1,0 +1,126 @@
+"""replay() : re-executer depuis un manifeste et rendre un verdict."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+from qbridge.backends import BACKENDS
+from qbridge.capture import capture
+from qbridge.fingerprint import environment_fingerprint, kernel_fingerprint
+from qbridge.manifest import Manifest
+from qbridge.tiers import Tier, split_options
+from qbridge.verdict import (
+    ComparisonResult,
+    Verdict,
+    compare_samples,
+    compare_state_vectors,
+)
+
+
+@dataclass(frozen=True)
+class ReplayReport:
+    verdict: Verdict
+    detail: str
+    comparison: ComparisonResult
+    original_backend: str
+    replay_backend: str
+    kernel_changed: bool
+    environment_drift: Dict[str, Any]
+
+
+def _verifier_integrite(manifest: Manifest) -> None:
+    """Refuse un manifeste dont le hash ne correspond plus au contenu."""
+    attendu = manifest._compute_semantic_hash()
+    if attendu != manifest.semantic_hash:
+        raise ValueError(
+            "Echec du controle d'integrite : le manifeste a ete modifie. "
+            f"hash stocke={manifest.semantic_hash[:16]}... "
+            f"hash recalcule={attendu[:16]}..."
+        )
+
+
+def _derive_environnement(manifest: Manifest) -> Dict[str, Any]:
+    actuel = environment_fingerprint()
+    return {
+        cle: {"capture": manifest.environment.get(cle), "replay": actuel.get(cle)}
+        for cle in sorted(set(manifest.environment) | set(actuel))
+        if manifest.environment.get(cle) != actuel.get(cle)
+    }
+
+
+def replay(
+    manifest: Manifest,
+    *,
+    backend: Optional[str] = None,
+    override_performance: Optional[Dict[str, Any]] = None,
+) -> ReplayReport:
+    """Rejoue l'execution decrite par `manifest`.
+
+    `override_performance` ne peut contenir que des options qui sont de niveau
+    PERFORMANCE POUR LE MODE DU MANIFESTE. C'est ce qui permet de rejouer sur
+    une machine ayant un autre nombre de coeurs — sauf en mode midcircuit, ou
+    `cpu_threads` fait partie de l'algorithme de mesure.
+    """
+    _verifier_integrite(manifest)
+
+    nom = backend or manifest.backend_name
+    if nom not in BACKENDS:
+        raise KeyError(f"Backend inconnu : {nom!r}. Disponibles : {sorted(BACKENDS)}")
+
+    mode = manifest.execution_mode()
+    options = dict(manifest.all_options())
+
+    if override_performance:
+        parts = split_options(override_performance, mode)
+        interdits = {**parts[Tier.SEMANTIC], **parts[Tier.NUMERIC]}
+        if interdits:
+            raise ValueError(
+                f"En mode {mode.value}, ces options ne sont pas de niveau "
+                f"PERFORMANCE et ne peuvent pas etre surchargees : {sorted(interdits)}"
+            )
+        options.update(override_performance)
+
+    if nom == "cirq-reference":
+        options = {}  # l'oracle n'accepte aucune option d'execution
+
+    impl = BACKENDS[nom]()
+    circuit = manifest.circuit()
+    bruit = manifest.noise()
+
+    if manifest.repetitions is None:
+        rejoue = impl.simulate(
+            circuit, seed=manifest.seed, options=options, noise=bruit
+        )
+    else:
+        rejoue = impl.sample(
+            circuit,
+            repetitions=manifest.repetitions,
+            seed=manifest.seed,
+            options=options,
+            noise=bruit,
+        )
+
+    origine = capture(
+        circuit,
+        backend=manifest.backend_name,
+        seed=manifest.seed,
+        repetitions=manifest.repetitions,
+        options=manifest.all_options(),
+        noise=bruit,
+    )
+
+    if manifest.repetitions is None:
+        comparaison = compare_state_vectors(origine.state_vector, rejoue)
+    else:
+        comparaison = compare_samples(origine.samples, rejoue)
+
+    return ReplayReport(
+        verdict=comparaison.verdict,
+        detail=comparaison.detail,
+        comparison=comparaison,
+        original_backend=manifest.backend_name,
+        replay_backend=nom,
+        kernel_changed=kernel_fingerprint() != manifest.kernel,
+        environment_drift=_derive_environnement(manifest),
+    )
