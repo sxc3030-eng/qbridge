@@ -21,6 +21,39 @@ Le manifeste est un JSON autonome : circuit sérialisé, seed, mode d'exécution
 options réparties par niveau d'influence, noyau SIMD, empreinte d'environnement,
 et un hash sémantique qui détecte toute falsification.
 
+## Les trois garanties
+
+Elles sont distinctes et il faut les séparer, parce que les confondre est
+exactement là où ce genre d'outil échoue.
+
+| Garantie | Ce qu'elle prouve | Plafond |
+|---|---|---|
+| **Bit-exact** | même simulateur, mêmes options → mêmes octets | simulateur seulement |
+| **Statistique** | distributions compatibles (χ²) | **plafond du matériel réel** |
+| **Archivistique** | les tirages archivés sont bien ceux qui ont été scellés, et tous les agrégats publiés s'en recalculent | **zéro ressource quantique** |
+
+La troisième est la plus importante et la plus solide : elle ne dépend d'aucun
+matériel, d'aucun simulateur, ni même de qsim installé. C'est celle que
+quelqu'un exercera réellement dans cinq ans.
+
+```python
+record = RunRecord.from_capture(capture(circuit, seed=7, repetitions=500))
+record.save("runs/mon_experience")           # manifest.json + samples.npz + record.json
+...
+verify_archival(RunRecord.load("runs/mon_experience"))   # sans rien exécuter
+replay_record(RunRecord.load("runs/mon_experience"))     # compare à l'archive
+```
+
+**`replay_record` ≠ `replay`.** `replay(manifest)` ré-exécute la capture d'origine
+pour obtenir sa référence : il ne peut donc pas détecter un bug présent dans les
+*deux* exécutions. `replay_record` lit la référence sur disque, scellée avant.
+C'est la seule des deux comparaisons qui prouve quelque chose sur la durée.
+
+Les bitstrings bruts sont **la seule donnée non regénérable** de toute la chaîne
+— le seul enregistrement physique de l'événement quantique. Ils sont archivés
+tels quels, jamais agrégés : les agrégats se recalculent, les tirages non. Une
+archive de 500 tirages sur un état de Bell pèse 3,1 Ko.
+
 ## Ce qui rend ce harnais différent
 
 `Backend` est un protocole abstrait. Aujourd'hui il est implémenté par `qsim` et
@@ -110,9 +143,7 @@ disponible.
 ## Hors périmètre pour cette version
 
 - `HardwareBackend` et l'intégration de snapshots de calibration réels
-- **Rejeu archivistique** : régénérer les chiffres publiés depuis les bitstrings
-  bruts, sans aucune ressource quantique. C'est la garantie que les utilisateurs
-  exerceront réellement dans cinq ans — prochaine priorité.
+- ~~Rejeu archivistique~~ — **fait en v0.2** (`verify_archival`, `replay_record`)
 - Export vers OpenQASM 3 / QIR
 - Capture du pré/post-traitement classique
 - Compression du `circuit_json` (180 Ko pour 20 qubits × depth 16)

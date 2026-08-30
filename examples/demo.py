@@ -4,8 +4,9 @@ from pathlib import Path
 
 import cirq
 
-from qbridge import capture, replay
+from qbridge import capture, replay, replay_record, verify_archival
 from qbridge.manifest import Manifest
+from qbridge.record import RunRecord
 
 SORTIE = Path(__file__).resolve().parent.parent / "runs"
 SORTIE.mkdir(exist_ok=True)
@@ -85,6 +86,45 @@ def main() -> None:
         print("  !! la falsification n'a pas ete detectee")
     except ValueError as e:
         print(f"  refuse : {e}")
+
+    bandeau("7. Archive complete : la recette PLUS les tirages bruts")
+    run_arch = capture(
+        cirq.Circuit(
+            cirq.H(cirq.LineQubit(0)),
+            cirq.CX(cirq.LineQubit(0), cirq.LineQubit(1)),
+            cirq.measure(cirq.LineQubit(0), cirq.LineQubit(1), key="m"),
+        ),
+        backend="qsim",
+        seed=7,
+        repetitions=500,
+    )
+    dossier = SORTIE / "archive_bell"
+    record = RunRecord.from_capture(run_arch)
+    record.save(dossier)
+    poids = sum(f.stat().st_size for f in dossier.iterdir())
+    print(f"  dossier      : {dossier.name}/ ({poids} octets)")
+    print(f"  fichiers     : {sorted(f.name for f in dossier.iterdir())}")
+    print(f"  comptages    : {record.bitstring_counts('m')}")
+    print("  -> les comptages sont DERIVES des tirages, jamais stockes a cote")
+
+    bandeau("8. Verification archivistique — ZERO ressource quantique")
+    rapport = verify_archival(RunRecord.load(dossier))
+    print(f"  manifeste intact : {rapport.manifest_intact}")
+    print(f"  resultats intacts: {rapport.results_intact}")
+    print(f"  detail           : {rapport.detail}")
+    print("  -> aucun simulateur n'a tourne : c'est la garantie qui survit 10 ans")
+
+    bandeau("9. Rejeu compare a l'ARCHIVE, pas a une re-execution")
+    r = replay_record(RunRecord.load(dossier))
+    print(f"  verdict : {r.verdict.name} — {r.detail}")
+    print("  -> la reference vient du disque, scellee avant : pas de tautologie")
+
+    bandeau("10. Un seul bit de tirage falsifie")
+    corrompu = RunRecord.load(dossier)
+    corrompu.samples["m"][0][0] ^= 1
+    rapport = verify_archival(corrompu)
+    print(f"  resultats intacts : {rapport.results_intact}")
+    print(f"  detail            : {rapport.detail[:110]}...")
 
 
 if __name__ == "__main__":
