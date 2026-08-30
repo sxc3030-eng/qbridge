@@ -117,6 +117,15 @@ change pas de forme**, seul le verdict atteignable se dégrade.
 | `NUMERICALLY_EQUIVALENT` | infidélité ≤ 1e-4 | simulateur, options numériques différentes |
 | `STATISTICALLY_COMPATIBLE` | χ² p ≥ 0.001 | **plafond du matériel réel** |
 | `DIVERGENT` | au-delà | dérive à expliquer |
+| `INDETERMINATE` | trop peu de tirages pour décider | régime clairsemé |
+
+`INDETERMINATE` est placé **après** `DIVERGENT` dans l'énumération, pour qu'aucun
+test du type `verdict <= NUMERICALLY_EQUIVALENT` ne l'accepte : ne pas pouvoir
+conclure n'est pas une réussite. Il se déclenche quand l'effectif attendu par
+bitstring tombe sous 5 — à 20 qubits avec 200 tirages, presque chaque bitstring
+est unique et **aucun** test statistique ne peut distinguer deux distributions.
+C'est une limite de complexité d'échantillonnage, pas un défaut réparable ; le
+dire est la seule réponse honnête.
 
 ## Le modèle central : le niveau dépend du mode
 
