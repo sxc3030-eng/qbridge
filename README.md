@@ -39,14 +39,65 @@ depuis une liste écrite à la main : un champ ajouté plus tard est scellé
 d'office. Une liste manuelle est précisément ce qui avait laissé `circuit_json`
 hors du sceau.
 
-> **Portée exacte du hash — à ne pas surestimer.** Le hash sémantique est
-> **non signé** : il est public et déterministe, donc quiconque modifie le
-> fichier peut le recalculer en deux lignes. Il détecte une **corruption ou une
-> altération accidentelle**, ainsi qu'une modification faite sans connaître
-> l'outil. Il ne détecte **pas** un adversaire délibéré. Pour ça il faudrait une
-> signature (HMAC avec clé, ou ed25519 sur le JSON canonique) — non implémenté,
-> et c'est la première chose à ajouter si l'archive doit servir de preuve
-> opposable.
+> **Portée exacte des hashes.** Ils sont **publics et déterministes** : ils
+> prouvent qu'un document est cohérent avec lui-même, rien de plus. Quiconque
+> modifie le manifeste les recalcule en deux lignes. Contre un adversaire, il
+> faut une **signature** — voir plus bas.
+
+## Signature
+
+Un hash prouve l'intégrité. Il ne dit rien de l'origine. La signature ajoute la
+seule chose qui manquait : **qui** a scellé.
+
+```bash
+qbridge keygen --key-id simon --private-out priv.key --public-out pub.key
+```
+
+```bash
+qbridge sign runs/essai --key-id simon --private-key priv.key
+```
+
+```bash
+qbridge verify runs/essai --public-key pub.key --key-id simon
+```
+
+### Deux algorithmes, deux garanties à ne pas confondre
+
+| Algorithme | Ce que ça prouve | Opposable à un tiers |
+|---|---|---|
+| `hmac-sha256` | intégrité, pour le porteur de la clé | **non** — qui peut vérifier peut forger |
+| `ed25519` | origine : seule la clé privée signe | **oui** |
+
+HMAC ne dépend que de la bibliothèque standard et marchera encore dans dix ans,
+mais il est **symétrique** : il ne vaut rien comme preuve face à un tiers. Seul
+ed25519 rend une archive opposable ; il demande `pip install qbridge[sign]`, la
+seule dépendance optionnelle du projet.
+
+### Trois détails qui ne sont pas des détails
+
+**La signature est détachée** (`signature.json`), jamais rangée dans le
+manifeste : `content_hash` couvre tous les champs, donc l'y mettre changerait le
+hash qu'elle signe.
+
+**On ne signe pas le hash nu**, mais un lien canonique
+`{schéma, algorithme, key_id, content_hash}`. Signer le hash seul laisserait
+deux failles : une signature HMAC pourrait être présentée comme une ed25519
+(substitution d'algorithme), et une signature de la clé A revendiquée pour la
+clé B (confusion de clés).
+
+**Une signature authentique d'un *autre* document est refusée.** La vérification
+contrôle quatre choses séparément — manifeste cohérent, algorithme attendu,
+signature qui vise *ce* document, cryptographie valide — et dit laquelle a
+échoué. Un vérificateur naïf qui validerait seulement la cryptographie
+accepterait une signature vraie collée sur un faux document.
+
+### Ce que qbridge ne fait pas
+
+Il ne gère aucune clé. Où vit la clé privée, qui y accède, comment on révoque :
+hors périmètre, entièrement à votre charge. `keygen` écrit la clé privée en
+`0o600` — ce que Windows n'applique qu'imparfaitement — et sans chiffrement au
+repos. Aucune clé n'apparaît jamais dans un manifeste, une signature ou un
+journal.
 
 ## Les trois garanties
 
@@ -91,9 +142,10 @@ qbridge capture circuit.json --seed 7 --repetitions 300 --option cpu_threads=4 -
 qbridge verify runs/essai
 ```
 
-Puis `qbridge replay`, `qbridge info` et `qbridge diff` (tous acceptent `--json`).
-`verify`, `info` et `diff` n'exécutent **aucun circuit** — c'est vérifié par des
-tests qui cassent volontairement les deux backends.
+Puis `qbridge replay`, `qbridge info`, `qbridge diff`, `qbridge sign` et
+`qbridge keygen` (tous acceptent `--json`).
+`verify`, `info`, `diff`, `sign` et `keygen` n'exécutent **aucun circuit** —
+c'est vérifié par des tests qui cassent volontairement les deux backends.
 
 Codes de sortie : `0` conforme · `1` compatible seulement statistiquement ·
 `2` divergent · `3` erreur · `4` indéterminé. Un verdict que la table ne connaît

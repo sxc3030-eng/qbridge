@@ -1,12 +1,13 @@
 """Interface en ligne de commande de qbridge.
 
-Cinq sous-commandes, deux familles :
+Sept sous-commandes, deux familles :
 
 - `capture` et `replay` executent un circuit. Elles consomment des ressources
   de calcul.
-- `verify`, `info` et `diff` n'en consomment aucune : elles ne lisent que des
-  octets deja poses sur le disque. C'est delibere — la garantie archivistique
-  doit rester exercable le jour ou plus rien ne s'execute.
+- `verify`, `info`, `diff`, `sign` et `keygen` n'en consomment aucune : elles ne
+  lisent et n'ecrivent que des octets sur le disque. C'est delibere — la
+  garantie archivistique doit rester exercable le jour ou plus rien ne
+  s'execute.
 
 Nuance a garder honnete : « n'execute rien » ne veut pas dire « n'importe
 rien ». `qbridge.record` importe `qbridge.capture`, qui importe le registre des
@@ -17,13 +18,16 @@ n'a besoin ni de cirq ni de qsimcirq.
 
 Aucune dependance hors bibliotheque standard. Le projet implemente son propre
 chi2 plutot que de dependre de scipy ; ce n'est pas le moment d'y ajouter un
-parseur d'arguments tiers.
+parseur d'arguments tiers. Seule exception, optionnelle et isolee : la signature
+ed25519 demande `cryptography` (extra `sign`). Son absence est signalee
+clairement et n'empeche rien d'autre — HMAC reste disponible en stdlib.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -322,13 +326,220 @@ def _cmd_capture(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------
 
 
+def _read_key_file(path: str, quoi: str) -> bytes:
+    """Lit une cle stockee en hexadecimal sur une ligne.
+
+    Format volontairement trivial : du texte hexadecimal, lisible et diffable.
+    Ce module ne chiffre pas les cles au repos — proteger le fichier est a la
+    charge de l'utilisateur.
+    """
+    chemin = Path(path)
+    if not chemin.is_file():
+        raise CliError(f"Fichier de cle introuvable : {chemin}")
+    try:
+        brut = chemin.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise CliError(f"Fichier de cle illisible : {exc}") from exc
+    try:
+        return bytes.fromhex(brut)
+    except ValueError as exc:
+        raise CliError(
+            f"La {quoi} dans {chemin} n'est pas de l'hexadecimal valide."
+        ) from exc
+
+
+def _write_key_file(path: str, data: bytes, *, private: bool) -> None:
+    """Ecrit une cle en hexadecimal, droits restreints si la plateforme suit."""
+    chemin = Path(path)
+    if chemin.exists():
+        raise CliError(
+            f"{chemin} existe deja. Ecraser une cle est irreversible : "
+            "supprimer le fichier d'abord si c'est bien l'intention."
+        )
+    contenu = data.hex() + "\n"
+    if private:
+        # 0o600 : lisible du seul proprietaire. Les ACL Windows ne suivent pas
+        # exactement cette semantique, d'ou l'avertissement affiche a l'ecran.
+        fd = os.open(chemin, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(contenu)
+    else:
+        chemin.write_text(contenu, encoding="utf-8")
+
+
+def _build_signer(args: argparse.Namespace) -> Any:
+    """Construit un signeur depuis les arguments, ou echoue clairement."""
+    from qbridge.signing import Ed25519Signer, HmacSigner
+
+    if bool(args.hmac_key) == bool(args.private_key):
+        raise CliError(
+            "Choisir exactement une cle : --hmac-key (symetrique, integrite "
+            "seulement) ou --private-key (ed25519, seule signature opposable "
+            "a un tiers)."
+        )
+    if args.hmac_key:
+        return HmacSigner(_read_key_file(args.hmac_key, "cle HMAC"), args.key_id)
+    return Ed25519Signer(_read_key_file(args.private_key, "cle privee"), args.key_id)
+
+
+def _build_verifier(args: argparse.Namespace) -> Any:
+    """Construit un verifieur, ou None si aucune cle n'a ete fournie."""
+    from qbridge.signing import Ed25519Verifier, HmacSigner
+
+    hmac_key = getattr(args, "hmac_key", None)
+    public_key = getattr(args, "public_key", None)
+    if not hmac_key and not public_key:
+        return None
+    if hmac_key and public_key:
+        raise CliError("Choisir --hmac-key OU --public-key, pas les deux.")
+    if not getattr(args, "key_id", None):
+        raise CliError("--key-id est obligatoire pour verifier une signature.")
+    if hmac_key:
+        return HmacSigner(_read_key_file(hmac_key, "cle HMAC"), args.key_id)
+    return Ed25519Verifier(_read_key_file(public_key, "cle publique"), args.key_id)
+
+
+def _cmd_keygen(args: argparse.Namespace) -> int:
+    """Fabrique une paire ed25519 et l'ecrit sur disque."""
+    from qbridge.signing import Ed25519Signer
+
+    _signer, private, public = Ed25519Signer.generate(args.key_id)
+    _write_key_file(args.private_out, private, private=True)
+    _write_key_file(args.public_out, public, private=False)
+
+    payload = {
+        "key_id": args.key_id,
+        "algorithm": "ed25519",
+        "private_key_file": str(Path(args.private_out)),
+        "public_key_file": str(Path(args.public_out)),
+        "exit_code": EXIT_OK,
+    }
+    text = [
+        f"Paire ed25519 generee pour {args.key_id!r}",
+        _line("cle privee", Path(args.private_out)),
+        _line("cle publique", Path(args.public_out)),
+        "",
+        "  La cle privee n'est PAS chiffree au repos. Elle est ecrite en 0o600,",
+        "  ce que Windows n'applique qu'imparfaitement : verifier les droits du",
+        "  fichier, ne jamais le versionner, ne jamais le transmettre.",
+        "  La cle publique, elle, est faite pour etre distribuee.",
+    ]
+    _emit(payload, args.json_output, text)
+    return EXIT_OK
+
+
+def _cmd_sign(args: argparse.Namespace) -> int:
+    """Signe le manifeste d'un enregistrement, en signature detachee."""
+    from qbridge.signing import SIGNATURE_FILENAME, sign_manifest
+
+    record = _load_record(args.directory)
+    signer = _build_signer(args)
+    signature = sign_manifest(record.manifest, signer)
+
+    destination = Path(args.directory) / SIGNATURE_FILENAME
+    signature.save(destination)
+
+    opposable = signature.algorithm == "ed25519"
+    payload = {
+        "directory": str(Path(args.directory)),
+        "signature_file": str(destination),
+        "algorithm": signature.algorithm,
+        "key_id": signature.key_id,
+        "content_hash": signature.content_hash,
+        "third_party_verifiable": opposable,
+        "exit_code": EXIT_OK,
+    }
+    text = [
+        f"Manifeste signe dans {Path(args.directory)}",
+        _line("algorithme", signature.algorithm),
+        _line("key_id", signature.key_id),
+        _line("hash signe", signature.content_hash),
+        _line("fichier", destination.name),
+        _line(
+            "portee",
+            "opposable a un tiers"
+            if opposable
+            else "integrite seulement (symetrique : qui verifie peut forger)",
+        ),
+    ]
+    _emit(payload, args.json_output, text)
+    return EXIT_OK
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
     """Verifie un dossier sans consommer la moindre ressource quantique."""
     from qbridge import verify_archival
 
+    from qbridge.signing import (
+        SIGNATURE_FILENAME,
+        Signature,
+        verify_manifest_signature,
+    )
+
     record = _load_record(args.directory)
     report = verify_archival(record)
     intact = report.manifest_intact and report.results_intact
+
+    chemin_sig = Path(args.directory) / SIGNATURE_FILENAME
+    sig_info: Dict[str, Any] = {"present": chemin_sig.is_file()}
+    lignes_sig: List[str] = []
+    verifieur = _build_verifier(args)
+
+    if not sig_info["present"]:
+        lignes_sig = [_line("signature", "absente")]
+        if verifieur is not None:
+            raise CliError(
+                f"Une cle a ete fournie mais {chemin_sig.name} n'existe pas dans "
+                "ce dossier : il n'y a rien a verifier."
+            )
+    else:
+        try:
+            signature = Signature.load(chemin_sig)
+        except (ValueError, OSError) as exc:
+            raise CliError(f"Signature illisible : {exc}") from exc
+        sig_info["algorithm"] = signature.algorithm
+        sig_info["key_id"] = signature.key_id
+        if verifieur is None:
+            # Une signature presente mais non verifiee ne doit surtout pas
+            # ressembler a une signature valide. On le dit, et on ne touche pas
+            # au code de sortie : rien n'a ete infirme, rien n'a ete prouve.
+            sig_info["verified"] = False
+            lignes_sig = [
+                _line(
+                    "signature",
+                    f"presente ({signature.algorithm}, key_id="
+                    f"{signature.key_id}) - NON VERIFIEE",
+                ),
+                "  Fournir --hmac-key ou --public-key avec --key-id pour la verifier.",
+            ]
+        else:
+            rapport = verify_manifest_signature(record.manifest, signature, verifieur)
+            sig_info["verified"] = True
+            sig_info["valid"] = rapport.valid
+            sig_info["binds_this_manifest"] = rapport.binds_this_manifest
+            sig_info["signature_valid"] = rapport.signature_valid
+            sig_info["third_party_verifiable"] = rapport.third_party_verifiable
+            sig_info["detail"] = rapport.detail
+            if not rapport.valid:
+                intact = False
+            lignes_sig = [
+                _line("signature", "VALIDE" if rapport.valid else "INVALIDE"),
+                _line("  algorithme", signature.algorithm),
+                _line("  key_id", signature.key_id),
+                # La portee decrit ce que l'ALGORITHME permet, pas l'issue de
+                # cette verification-ci : « ed25519 » reste opposable par nature
+                # meme quand la signature echoue. La ligne « INVALIDE » plus haut
+                # porte deja l'echec ; les confondre ferait croire qu'une
+                # signature asymetrique est retombee au niveau symetrique.
+                _line(
+                    "  portee de l'algo",
+                    "opposable a un tiers"
+                    if signature.algorithm == "ed25519"
+                    else "integrite seulement (symetrique)",
+                ),
+                _line("  detail", rapport.detail),
+            ]
+
     code = EXIT_OK if intact else EXIT_MISMATCH
 
     payload = {
@@ -341,6 +552,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         "result_hash": record.result_hash,
         "detail": report.detail,
         "executed_circuit": False,
+        "signature": sig_info,
         "exit_code": code,
     }
     text = [
@@ -355,6 +567,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         _line("cles de mesure", ", ".join(report.measurement_keys) or "(aucune)"),
         _line("tirages archives", report.total_shots),
         _line("detail", report.detail),
+        *lignes_sig,
         "  Aucun circuit n'a ete execute.",
     ]
     _emit(payload, args.json_output, text)
@@ -798,7 +1011,85 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="sortie JSON canonique sur stdout",
     )
+    verify_p.add_argument(
+        "--hmac-key",
+        metavar="FICHIER",
+        help=(
+            "fichier de cle HMAC hexadecimale, pour verifier une signature "
+            "symetrique (integrite seulement)"
+        ),
+    )
+    verify_p.add_argument(
+        "--public-key",
+        metavar="FICHIER",
+        help=(
+            "fichier de cle publique ed25519 hexadecimale, pour verifier une "
+            "signature opposable a un tiers"
+        ),
+    )
+    verify_p.add_argument(
+        "--key-id",
+        help="identifiant de cle attendu ; obligatoire des qu'une cle est fournie",
+    )
     verify_p.set_defaults(handler=_cmd_verify)
+
+    # ---- keygen ----
+    keygen_p = subparsers.add_parser(
+        "keygen",
+        help="generer une paire de cles ed25519",
+        description=(
+            "Genere une paire ed25519 et l'ecrit en hexadecimal. La cle privee "
+            "n'est PAS chiffree au repos : elle est ecrite en 0o600, ce que "
+            "Windows n'applique qu'imparfaitement. Ne jamais la versionner. "
+            "La gestion des cles — ou elles vivent, qui y accede, comment on "
+            "revoque — reste entierement a votre charge."
+        ),
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    keygen_p.add_argument("--key-id", required=True, help="identifiant de la cle")
+    keygen_p.add_argument(
+        "--private-out", required=True, metavar="FICHIER", help="ou ecrire la cle privee"
+    )
+    keygen_p.add_argument(
+        "--public-out", required=True, metavar="FICHIER", help="ou ecrire la cle publique"
+    )
+    keygen_p.add_argument(
+        "--json", dest="json_output", action="store_true", help="sortie JSON canonique"
+    )
+    keygen_p.set_defaults(handler=_cmd_keygen)
+
+    # ---- sign ----
+    sign_p = subparsers.add_parser(
+        "sign",
+        help="signer le manifeste d'un enregistrement (signature detachee)",
+        description=(
+            "Ecrit signature.json a cote de manifest.json. La signature est "
+            "DETACHEE : la ranger dans le manifeste changerait le content_hash "
+            "qu'elle signe.\n\n"
+            "Deux algorithmes, deux garanties distinctes :\n"
+            "  --hmac-key      symetrique. Prouve l'integrite au porteur de la "
+            "cle. Qui peut verifier peut aussi forger : sans valeur comme "
+            "preuve opposable a un tiers.\n"
+            "  --private-key   ed25519. Seule la cle privee signe, n'importe qui "
+            "verifie avec la publique. Le seul des deux qui rende une archive "
+            "opposable."
+        ),
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sign_p.add_argument("directory", help="dossier d'un enregistrement")
+    sign_p.add_argument("--key-id", required=True, help="identifiant de la cle")
+    sign_p.add_argument(
+        "--hmac-key", metavar="FICHIER", help="cle HMAC hexadecimale (symetrique)"
+    )
+    sign_p.add_argument(
+        "--private-key", metavar="FICHIER", help="cle privee ed25519 hexadecimale"
+    )
+    sign_p.add_argument(
+        "--json", dest="json_output", action="store_true", help="sortie JSON canonique"
+    )
+    sign_p.set_defaults(handler=_cmd_sign)
 
     # ---- replay ----
     replay_p = subparsers.add_parser(

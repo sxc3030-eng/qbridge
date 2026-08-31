@@ -201,11 +201,19 @@ def verify_archival(record: "RunRecord") -> ArchivalReport:
             )
 
     if motifs:
+        # On rapporte le nombre de tirages REELLEMENT presents, meme en echec :
+        # annoncer 0 a cote d'une liste de cles non vide se contredit, et prive
+        # l'enqueteur d'un fait qu'on connait. Ce que l'echec retire, c'est la
+        # garantie que ces tirages sont les bons — pas leur existence.
         return ArchivalReport(
             manifest_intact=manifeste_ok,
             results_intact=resultats_ok,
             measurement_keys=sorted(record.samples) if record.samples else [],
-            total_shots=0,
+            total_shots=(
+                sum(int(v.shape[0]) for v in record.samples.values())
+                if record.samples
+                else 0
+            ),
             detail=" | ".join(motifs),
         )
 

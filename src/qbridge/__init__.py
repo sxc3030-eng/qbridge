@@ -19,10 +19,20 @@ from qbridge.replay import (
     replay_record,
     verify_archival,
 )
+from qbridge.signing import (
+    Ed25519Signer,
+    Ed25519Verifier,
+    HmacSigner,
+    Signature,
+    SignatureAlgorithm,
+    SignatureReport,
+    sign_manifest,
+    verify_manifest_signature,
+)
 from qbridge.tiers import Tier
 from qbridge.verdict import Verdict
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "capture",
     "replay",
@@ -42,5 +52,13 @@ __all__ = [
     "CallableCapture",
     "SourceDriftReport",
     "Evidence",
+    "sign_manifest",
+    "verify_manifest_signature",
+    "Signature",
+    "SignatureAlgorithm",
+    "SignatureReport",
+    "HmacSigner",
+    "Ed25519Signer",
+    "Ed25519Verifier",
     "__version__",
 ]
