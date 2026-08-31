@@ -33,17 +33,25 @@ def _plafonner_selon_le_backend(
     incapables = []
     if not impl.is_bit_exact_replayable():
         incapables.append(impl.name)
-    if backend_capture and backend_capture != impl.name:
-        from qbridge.backends import BACKENDS
 
+    if backend_capture and backend_capture != impl.name:
+        # On LIT un attribut de classe. La version precedente construisait un
+        # temoin dans un `try/except Exception: pass` : des que la construction
+        # echouait, le plafond cessait de s'appliquer EN SILENCE et le
+        # blanchiment d'une archive materielle redevenait possible. Mesure :
+        # avec le temoin sabote, un rejeu sur qsim ressortait BIT_EXACT.
+        #
+        # Une exception avalee qui desactive un controle de securite est
+        # exactement le defaut que ce plafond existe pour empecher.
         classe = BACKENDS.get(backend_capture)
-        if classe is not None:
-            try:
-                temoin = classe() if backend_capture not in NEEDS_CALIBRATION else classe(None)
-                if not temoin.is_bit_exact_replayable():
-                    incapables.append(f"{backend_capture} (capture)")
-            except Exception:  # pragma: no cover - backend non constructible
-                pass
+        if classe is None:
+            # Backend inconnu : on ne peut PAS prouver qu'il est
+            # bit-reproductible, donc on suppose qu'il ne l'est pas. Se taire
+            # ici laisserait passer un verdict trop fort pour un backend dont
+            # on ignore tout.
+            incapables.append(f"{backend_capture} (capture, backend inconnu)")
+        elif not classe.BIT_EXACT_REPLAYABLE:
+            incapables.append(f"{backend_capture} (capture)")
 
     if not incapables:
         return comparaison

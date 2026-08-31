@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from qbridge import Verdict, capture, capture_classical, replay, verify_source_unchanged
-from qbridge.calibration import synthetic_snapshot
+from qbridge.calibration import CalibrationSnapshot, synthetic_snapshot
 from qbridge.capture import hash_samples
 from qbridge.cli import EXIT_ERROR, EXIT_OK, main
 from qbridge.record import RunRecord
@@ -332,3 +332,112 @@ def test_l_erreur_de_lecture_ne_touche_que_les_qubits_mesures():
     assert vises == {q[0]}, (
         f"l'erreur de lecture vise {sorted(vises)} alors que seul {q[0]} est mesure"
     )
+
+
+# ===== le plafond ne doit dependre d'AUCUNE construction d'objet =============
+
+
+def test_le_plafond_ne_depend_pas_de_la_construction_d_un_temoin(monkeypatch):
+    """AVANT correction (v0.8) : le plafond construisait un backend temoin pour
+    interroger le backend de CAPTURE, dans un `try/except Exception: pass`. Des
+    que cette construction echouait, le plafond cessait de s'appliquer EN
+    SILENCE et le blanchiment d'archive materielle redevenait possible.
+
+    Mesure : avec le temoin sabote, un rejeu sur qsim ressortait BIT_EXACT.
+
+    Une exception avalee qui desactive un controle de securite est exactement
+    le defaut que ce plafond existe pour empecher. La replicabilite est
+    desormais un attribut de CLASSE, lu sans rien construire.
+    """
+    from qbridge.backends.hardware import SimulatedHardwareBackend
+
+    neutre = CalibrationSnapshot.build(
+        device_id="neutre",
+        device_version="1",
+        qubits={},
+        gates={},
+        basis_gates=[],
+        coupling_map=[],
+    )
+    run = capture(
+        _bell_mesure(),
+        backend="hardware-sim",
+        seed=7,
+        repetitions=200,
+        calibration=neutre,
+    )
+
+    original = SimulatedHardwareBackend.__init__
+
+    def sabotage_du_temoin(self, calibration=None):
+        # Le temoin etait construit avec calibration=None ; l'execution reelle
+        # recoit toujours une calibration.
+        if calibration is None:
+            raise RuntimeError("temoin non constructible")
+        original(self, calibration)
+
+    monkeypatch.setattr(SimulatedHardwareBackend, "__init__", sabotage_du_temoin)
+
+    rapport = replay(run.manifest, backend="qsim")
+    assert rapport.verdict is not Verdict.BIT_EXACT, (
+        "le plafond a saute parce qu'un objet n'a pas pu etre construit"
+    )
+    assert "plafonne" in rapport.detail
+
+
+def test_un_backend_de_capture_inconnu_est_traite_comme_non_reproductible():
+    """On ne peut pas PROUVER qu'un backend inconnu est bit-reproductible :
+    on suppose donc qu'il ne l'est pas. Se taire laisserait passer un verdict
+    trop fort pour un backend dont on ignore tout."""
+    from qbridge.replay import _plafonner_selon_le_backend
+    from qbridge.backends.qsim import QsimBackend
+    from qbridge.verdict import ComparisonResult
+
+    depart = ComparisonResult(Verdict.BIT_EXACT, "octets identiques")
+    plafonne = _plafonner_selon_le_backend(
+        depart, QsimBackend(), "backend-qui-n-existe-pas"
+    )
+    assert plafonne.verdict is Verdict.STATISTICALLY_COMPATIBLE
+    assert "inconnu" in plafonne.detail
+
+
+def test_la_replicabilite_est_lisible_sans_instancier():
+    """C'est ce qui rend la construction du temoin inutile."""
+    from qbridge.backends import BACKENDS
+
+    for nom, classe in BACKENDS.items():
+        assert isinstance(classe.BIT_EXACT_REPLAYABLE, bool), nom
+
+
+def test_classe_et_instance_ne_peuvent_pas_diverger():
+    from qbridge.backends import BACKENDS
+    from qbridge.backends.hardware import SimulatedHardwareBackend
+
+    assert SimulatedHardwareBackend(None).is_bit_exact_replayable() is False
+    for nom, classe in BACKENDS.items():
+        if nom == "hardware-sim":
+            continue
+        assert classe().is_bit_exact_replayable() is classe.BIT_EXACT_REPLAYABLE
+
+
+def test_une_archive_sans_tirages_ne_se_confond_pas_avec_une_archive_vide():
+    """`samples=None` (mode vecteur d'etat) et `samples={}` (des tirages, zero
+    cle) sont deux etats differents ; ils partageaient une empreinte."""
+    from qbridge.capture import hash_samples
+
+    base = _record(50)
+    sans = RunRecord(
+        schema_version=base.schema_version,
+        manifest=base.manifest,
+        result_hash=hash_samples({}),
+        samples=None,
+        state_vector_hash=base.state_vector_hash,
+    )
+    vide = RunRecord(
+        schema_version=base.schema_version,
+        manifest=base.manifest,
+        result_hash=hash_samples({}),
+        samples={},
+        state_vector_hash=base.state_vector_hash,
+    )
+    assert sans.content_hash() != vide.content_hash()

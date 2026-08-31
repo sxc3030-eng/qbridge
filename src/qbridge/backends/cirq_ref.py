@@ -16,6 +16,13 @@ class CirqReferenceBackend:
     """Enveloppe `cirq.Simulator`. Instance fraiche a chaque appel."""
 
     name = "cirq-reference"
+    BIT_EXACT_REPLAYABLE = True
+    """Attribut de CLASSE : lisible sans construire d'instance.
+
+    Le plafond de verdict doit pouvoir interroger le backend de CAPTURE,
+    qu'on ne peut pas toujours instancier (le backend materiel exige une
+    calibration). Construire un temoin dans un try/except revenait a
+    desactiver le plafond en silence des que la construction echouait."""
 
     def __init__(self) -> None:
         self.version = cirq.__version__
@@ -54,4 +61,7 @@ class CirqReferenceBackend:
         return dict(sim.run(circuit, repetitions=repetitions).measurements)
 
     def is_bit_exact_replayable(self) -> bool:
-        return True
+        # Lit l'attribut de classe : instance et classe ne peuvent pas
+        # diverger, il n'y a qu'une source de verite.
+        return type(self).BIT_EXACT_REPLAYABLE
+

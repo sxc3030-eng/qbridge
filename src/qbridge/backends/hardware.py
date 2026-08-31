@@ -46,6 +46,13 @@ class SimulatedHardwareBackend:
     """
 
     name = "hardware-sim"
+    BIT_EXACT_REPLAYABLE = False
+    """Attribut de CLASSE : lisible sans construire d'instance.
+
+    Le plafond de verdict doit pouvoir interroger le backend de CAPTURE,
+    qu'on ne peut pas toujours instancier (le backend materiel exige une
+    calibration). Construire un temoin dans un try/except revenait a
+    desactiver le plafond en silence des que la construction echouait."""
 
     def __init__(self, calibration: Optional[CalibrationSnapshot] = None) -> None:
         self._calibration = calibration
@@ -58,8 +65,10 @@ class SimulatedHardwareBackend:
     # ---------- le contrat ----------
 
     def is_bit_exact_replayable(self) -> bool:
-        """Toujours False. Voir la note 2 du module."""
-        return False
+        # Lit l'attribut de classe : instance et classe ne peuvent pas
+        # diverger, il n'y a qu'une source de verite.
+        return type(self).BIT_EXACT_REPLAYABLE
+
 
     def simulate(
         self,

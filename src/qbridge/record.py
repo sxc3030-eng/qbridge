@@ -76,7 +76,13 @@ class RunRecord:
                 "manifest_content_hash": self.manifest.content_hash,
                 "result_hash": self.result_hash,
                 "state_vector_hash": self.state_vector_hash,
-                "measurement_keys": sorted(self.samples) if self.samples else [],
+                # `has_samples` distingue « pas de tirages du tout » (mode
+                # vecteur d'etat) de « des tirages, zero cle » : sans lui les
+                # deux archives partageaient une empreinte.
+                "has_samples": self.samples is not None,
+                "measurement_keys": (
+                    sorted(self.samples) if self.samples is not None else []
+                ),
             }
         )
 
