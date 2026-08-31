@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from qbridge.backends import BACKENDS
+from qbridge.backends import BACKENDS, NEEDS_CALIBRATION, make_backend
 from qbridge.capture import capture
 from qbridge.fingerprint import environment_fingerprint, kernel_fingerprint
 from qbridge.manifest import Manifest
@@ -115,9 +115,12 @@ def replay(
     if nom == "cirq-reference":
         options = {}  # l'oracle n'accepte aucune option d'execution
 
-    impl = BACKENDS[nom]()
+    calibration = manifest.calibration()
+    impl = make_backend(nom, calibration if nom in NEEDS_CALIBRATION else None)
     circuit = manifest.circuit()
-    bruit = manifest.noise()
+    # Le backend materiel derive son bruit de la calibration scellee et refuse
+    # qu'on lui en passe un autre : le lui transmettre le contredirait.
+    bruit = None if nom in NEEDS_CALIBRATION else manifest.noise()
 
     if manifest.repetitions is None:
         rejoue = impl.simulate(
@@ -138,7 +141,14 @@ def replay(
         seed=manifest.seed,
         repetitions=manifest.repetitions,
         options=manifest.all_options(),
-        noise=bruit,
+        noise=(
+            None
+            if manifest.backend_name in NEEDS_CALIBRATION
+            else manifest.noise()
+        ),
+        calibration=(
+            calibration if manifest.backend_name in NEEDS_CALIBRATION else None
+        ),
     )
 
     if manifest.repetitions is None:
@@ -270,9 +280,10 @@ def replay_record(
     if nom == "cirq-reference":
         options = {}
 
-    impl = BACKENDS[nom]()
+    calibration = manifest.calibration()
+    impl = make_backend(nom, calibration if nom in NEEDS_CALIBRATION else None)
     circuit = manifest.circuit()
-    bruit = manifest.noise()
+    bruit = None if nom in NEEDS_CALIBRATION else manifest.noise()
 
     if manifest.repetitions is None:
         rejoue = impl.simulate(circuit, seed=manifest.seed, options=options, noise=bruit)

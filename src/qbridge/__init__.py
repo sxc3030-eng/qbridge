@@ -1,5 +1,11 @@
 """qbridge — harnais de capture/replay pour executions de circuits quantiques."""
 
+from qbridge.backends import SimulatedHardwareBackend, make_backend
+from qbridge.calibration import (
+    CalibrationSnapshot,
+    DatedValue,
+    synthetic_snapshot,
+)
 from qbridge.capture import CaptureRun, capture
 from qbridge.classical import (
     CallableCapture,
@@ -32,7 +38,7 @@ from qbridge.signing import (
 from qbridge.tiers import Tier
 from qbridge.verdict import Verdict
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "capture",
     "replay",
@@ -60,5 +66,10 @@ __all__ = [
     "HmacSigner",
     "Ed25519Signer",
     "Ed25519Verifier",
+    "CalibrationSnapshot",
+    "DatedValue",
+    "synthetic_snapshot",
+    "SimulatedHardwareBackend",
+    "make_backend",
     "__version__",
 ]

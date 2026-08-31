@@ -40,7 +40,7 @@ from qbridge.fingerprint import environment_fingerprint, kernel_fingerprint
 from qbridge.modes import ExecutionMode, detect_mode
 from qbridge.tiers import Tier, split_options
 
-MANIFEST_SCHEMA_VERSION = "2.0"
+MANIFEST_SCHEMA_VERSION = "3.0"
 
 
 @dataclass(frozen=True)
@@ -62,6 +62,10 @@ class Manifest:
     performance_options: Dict[str, Any]
     kernel: Dict[str, Any]
     environment: Dict[str, Any]
+    calibration_json: Optional[str] = None
+    """`CalibrationSnapshot` serialise : l'etat DATE de l'appareil au moment de
+    l'execution. Contrairement au contexte classique, il entre dans le hash
+    semantique — l'etat de l'appareil determine bel et bien le resultat."""
     classical_json: Optional[str] = None
     """`ClassicalContext` serialise : le code qui a bati le circuit et celui qui
     reduira les tirages, plus l'environnement Python epingle. C'est ce qui rend
@@ -81,6 +85,7 @@ class Manifest:
         options: Dict[str, Any],
         noise_json: Optional[str],
         classical_json: Optional[str] = None,
+        calibration_json: Optional[str] = None,
     ) -> "Manifest":
         if seed is None:
             raise ValueError(
@@ -107,6 +112,7 @@ class Manifest:
             kernel=kernel_fingerprint(),
             environment=environment_fingerprint(),
             classical_json=classical_json,
+            calibration_json=calibration_json,
         )
         scelle = cls(**{**brut.__dict__, "semantic_hash": brut._compute_semantic_hash()})
         return cls(**{**scelle.__dict__, "content_hash": scelle._compute_content_hash()})
@@ -125,6 +131,10 @@ class Manifest:
                 "semantic_options": self.semantic_options,
                 "numeric_options": self.numeric_options,
                 "kernel": self.kernel,
+                # La calibration DETERMINE le resultat : deux executions sur des
+                # etats d'appareil differents ne sont pas la meme experience.
+                # C'est ce qui la distingue du contexte classique, exclu ici.
+                "calibration_json": self.calibration_json,
             }
         )
 
@@ -144,6 +154,14 @@ class Manifest:
                 if f.name != "content_hash"
             }
         )
+
+    def calibration(self) -> Optional[Any]:
+        """Reconstruit l'instantane de calibration scelle, s'il y en a un."""
+        if self.calibration_json is None:
+            return None
+        from qbridge.calibration import CalibrationSnapshot
+
+        return CalibrationSnapshot.from_json(self.calibration_json)
 
     def classical(self) -> Optional[Any]:
         """Reconstruit le `ClassicalContext` scelle, s'il y en a un."""

@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 import cirq
 import numpy as np
 
-from qbridge.backends import BACKENDS
+from qbridge.backends import BACKENDS, make_backend
 from qbridge.digest import canonical_json, sha256_of_array, sha256_of_text
 from qbridge.manifest import Manifest
 
@@ -38,6 +38,7 @@ def capture(
     options: Optional[Dict[str, Any]] = None,
     noise: Optional[cirq.NoiseModel] = None,
     classical: Optional[Any] = None,
+    calibration: Optional[Any] = None,
 ) -> CaptureRun:
     """Execute `circuit` et renvoie un `CaptureRun` scelle.
 
@@ -49,13 +50,13 @@ def capture(
     l'environnement Python epingle. C'est ce qui complete la garantie
     archivistique — sans lui, on archive des bitstrings que plus personne ne
     saura interpreter.
+
+    `calibration` accepte un `CalibrationSnapshot` : l'etat DATE de l'appareil.
+    Obligatoire pour un backend materiel, refuse pour les simulateurs qui ne
+    s'en servent pas.
     """
-    if backend not in BACKENDS:
-        raise KeyError(
-            f"Backend inconnu : {backend!r}. Disponibles : {sorted(BACKENDS)}"
-        )
     options = dict(options or {})
-    impl = BACKENDS[backend]()
+    impl = make_backend(backend, calibration)
 
     manifest = Manifest.build(
         circuit=circuit,
@@ -67,6 +68,9 @@ def capture(
         noise_json=cirq.to_json(noise) if noise is not None else None,
         classical_json=(
             canonical_json(classical.to_dict()) if classical is not None else None
+        ),
+        calibration_json=(
+            calibration.to_json() if calibration is not None else None
         ),
     )
 

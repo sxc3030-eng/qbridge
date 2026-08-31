@@ -175,12 +175,69 @@ C'est ce qui complète la garantie archivistique : tirages bruts + code de
 réduction + environnement épinglé = tous les chiffres publiés regénérables,
 sans aucune ressource quantique.
 
+## Le backend matériel — l'épreuve du protocole
+
+`Backend` est un protocole abstrait, et il a maintenant une implémentation qui le
+**met à l'épreuve** plutôt que de le confirmer. `hardware-sim` viole les trois
+hypothèses confortables du simulateur :
+
+| Hypothèse du simulateur | Ce que fait `hardware-sim` |
+|---|---|
+| on peut lire le vecteur d'état | `simulate()` lève `NotImplementedError` — no-cloning, mesure destructive |
+| le résultat est reproductible bit-à-bit | `is_bit_exact_replayable()` → `False`, le verdict est plafonné |
+| le backend est sans état | exige un **instantané de calibration daté**, scellé au manifeste |
+
+Le test qui compte :
+
+```
+verdict : STATISTICALLY_COMPATIBLE
+detail  : echantillons identiques (plafonné : le backend hardware-sim
+          ne garantit pas la reproductibilité bit-pour-bit)
+```
+
+Les octets **coïncident** — qsim est déterministe sous le capot — et le harnais
+refuse quand même `BIT_EXACT`. Le plafond est un **contrat du backend**, jamais
+une déduction de ce qu'on observe. Déduire le verdict de l'observation donnerait,
+sur une vraie machine, une conclusion que la physique ne permet pas.
+
+`hardware-sim` s'appelle ainsi et pas `hardware` : c'est un substitut, et un
+manifeste ne doit jamais laisser croire qu'il vient d'une vraie machine. Le jour
+où une l'est, **seule `sample()` change** — elle postera un job au lieu d'appeler
+qsim. Contrat, manifeste et verdicts restent identiques.
+
+### L'instantané de calibration
+
+Un instantané n'est **pas** l'état d'un appareil à un instant : c'est un sac de
+mesures datées séparément. Dans le `props_fez.json` d'IBM, T1 est mesuré le
+26 février à 06h56 et `readout_error` le 24 février — deux jours d'écart dans un
+même « instantané ». Chaque paramètre porte donc sa propre date, et
+`temporal_spread_seconds()` expose l'écart au lieu de le cacher.
+
+On scelle les **données datées**, jamais le modèle de bruit qu'on en dérive : la
+dérivation est du code et le code change, les mesures sont un fait historique.
+Cirq fait le même choix (`GoogleNoiseProperties` est sérialisable, pas le modèle),
+et Aer le démontre par l'absurde — `NoiseModel.from_dict()` y est déprécié depuis
+0.15, ce qui casserait toute archive ayant scellé un modèle.
+
+La calibration entre dans le **`semantic_hash`**, contrairement au contexte
+classique : l'état de l'appareil détermine bel et bien le résultat. Deux
+exécutions sur des états d'appareil différents ne sont pas la même expérience.
+
+
+```python
+snap = synthetic_snapshot(qubits)          # ou chargé depuis un fournisseur
+run = capture(circuit, backend="hardware-sim", seed=7,
+              repetitions=400, calibration=snap)
+```
+
+Une calibration passée à un backend qui ne s'en sert pas est **refusée**, jamais
+ignorée : l'ignorer laisserait croire qu'elle a influencé le résultat.
+
 ## Ce qui rend ce harnais différent
 
-`Backend` est un protocole abstrait. Aujourd'hui il est implémenté par `qsim` et
-par le simulateur de référence de Cirq. Le jour où une machine réelle est
-disponible, un `HardwareBackend` implémente le même protocole : **le manifeste ne
-change pas de forme**, seul le verdict atteignable se dégrade.
+`Backend` est un protocole abstrait, implémenté par `qsim`, le simulateur de
+référence de Cirq, et `hardware-sim`. **Le manifeste ne change pas de forme**
+d'un backend à l'autre ; seul le verdict atteignable se dégrade.
 
 | Verdict | Signification | Atteignable par |
 |---|---|---|
@@ -272,7 +329,7 @@ disponible.
 
 ## Hors périmètre pour cette version
 
-- `HardwareBackend` et l'intégration de snapshots de calibration réels
+- ~~`HardwareBackend` et snapshots de calibration~~ — **fait** (`hardware-sim`, `CalibrationSnapshot`). Reste à brancher un vrai fournisseur.
 - ~~Rejeu archivistique~~ — **fait en v0.2** (`verify_archival`, `replay_record`)
 - Export vers OpenQASM 3 / QIR
 - ~~Capture du pré/post-traitement classique~~ — **faite et scellée au `Manifest`**
