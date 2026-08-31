@@ -17,8 +17,10 @@ y est deprecie depuis 0.15, ce qui casserait toute archive qui aurait scelle un
 modele plutot que ses donnees sources.
 
 LA DERIVATION EST VOLONTAIREMENT SIMPLE. Relaxation d'amplitude depuis T1,
-depolarisation depuis l'erreur de porte, inversion de bit avant mesure depuis
-l'erreur de lecture. Ce n'est PAS un modele de bruit fidele a un appareil reel,
+depolarisation depuis l'erreur de la porte PRECISE (`gate_error_for`, jamais la
+moyenne tant qu'une donnee specifique existe), inversion de bit avant mesure
+depuis l'erreur de lecture. Aucune diaphonie, aucun terme ZZ, aucune erreur
+correlee. Ce n'est PAS un modele de bruit fidele a un appareil reel,
 et ce module ne pretend pas l'etre : son role est d'eprouver le contrat du
 harnais, pas de reproduire une physique. Un modele fidele viendra du fournisseur
 le jour ou une vraie machine est branchee — le manifeste, lui, ne changera pas
@@ -164,8 +166,39 @@ class CalibrationSnapshot:
             return None
         return params[name].value
 
+    def gate_error_for(self, operation: "cirq.Operation") -> float:
+        """Erreur de la porte PRECISE, avec repli documente.
+
+        Chaine de repli, du plus specifique au plus vague :
+
+        1. cle exacte `nom:qubits` — la donnee que l'instantane a scellee ;
+        2. n'importe quelle porte portant sur exactement ces qubits ;
+        3. moyenne globale.
+
+        Sans cette recherche, `mean_gate_error()` etait appelee pour TOUTES les
+        portes, ce qui ecrasait la finesse par-porte que l'instantane prend
+        justement soin d'enregistrer avec sa date. Mesure : deux instantanes,
+        l'un avec trois portes a 0.01, l'autre avec une porte a 0.03 et deux a
+        0.0, ont des hash differents — les donnees SONT scellees — mais
+        produisaient un bruit identique.
+        """
+        qubits = ",".join(str(q) for q in operation.qubits)
+        nom = str(operation.gate).lower().split("(")[0].strip()
+
+        exacte = self.gate_param(f"{nom}:{qubits}", "gate_error")
+        if exacte is not None:
+            return exacte
+
+        suffixe = f":{qubits}"
+        for cle, params in self.gates.items():
+            if cle.endswith(suffixe) and "gate_error" in params:
+                return params["gate_error"].value
+
+        return self.mean_gate_error()
+
     def mean_gate_error(self) -> float:
-        """Erreur de porte moyenne, repli quand une porte precise est absente."""
+        """Erreur de porte moyenne. Dernier repli de `gate_error_for`, jamais
+        le chemin principal."""
         valeurs = [
             p["gate_error"].value for p in self.gates.values() if "gate_error" in p
         ]
@@ -300,8 +333,16 @@ class _CalibrationNoiseModel(cirq.NoiseModel):
         # bien l'une apres l'autre, pas simultanement.
         depolarisation = []
         relaxation = []
+        # L'erreur est prise PAR OPERATION, pas en moyenne : c'est la donnee
+        # que l'instantane a scellee avec sa propre date.
+        erreur_par_qubit = {}
+        for operation in moment.operations:
+            erreur = self._snap.gate_error_for(operation)
+            for qubit in operation.qubits:
+                erreur_par_qubit[qubit] = erreur
+
         for qubit in sorted(moment.qubits):
-            p = self._snap.mean_gate_error()
+            p = erreur_par_qubit.get(qubit, 0.0)
             if p > 0:
                 depolarisation.append(cirq.depolarize(min(p, 0.75)).on(qubit))
             gamma = self._damping(qubit)

@@ -213,3 +213,70 @@ def test_le_manifeste_sur_disque_reste_verifiable(tmp_path):
     chemin.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError, match="circuit"):
         Manifest.load(chemin).verify_self()
+
+
+# ---------- collision d'empreinte de resultats (trouvee en auto-revue) ----------
+
+
+def test_hash_samples_est_injectif():
+    """AVANT correction : `hash_samples` joignait f"{k}:{hash}" sans
+    delimiteur. Les cles de mesure etant des chaines arbitraires, on pouvait
+    fabriquer une cle contenant `:` et de l'hexadecimal pour reproduire
+    exactement la concatenation de DEUX cles :
+
+        A = {"m": a, "x": b}     ->  "m:" + H1 + "x:" + H2
+        B = {f"m:{H1}x": b}      ->  "m:H1x" + ":" + H2
+
+    Deux archives de contenus differents obtenaient le meme result_hash, donc
+    `verify_integrity()` acceptait une archive substituee.
+    """
+    from qbridge.capture import hash_samples
+    from qbridge.digest import sha256_of_array
+
+    a = np.array([[0, 1], [1, 0]], dtype=np.uint8)
+    b = np.array([[1, 1], [0, 0]], dtype=np.uint8)
+    h1 = sha256_of_array(a)
+
+    deux_cles = {"m": a, "x": b}
+    une_cle_forgee = {f"m:{h1}x": b}
+
+    assert hash_samples(deux_cles) != hash_samples(une_cle_forgee), (
+        "collision : deux jeux de mesures differents partagent une empreinte"
+    )
+
+
+def test_hash_samples_distingue_une_cle_renommee():
+    from qbridge.capture import hash_samples
+
+    a = np.array([[0, 1]], dtype=np.uint8)
+    assert hash_samples({"m": a}) != hash_samples({"n": a})
+
+
+def test_hash_samples_est_stable():
+    from qbridge.capture import hash_samples
+
+    a = np.array([[0, 1]], dtype=np.uint8)
+    assert hash_samples({"m": a}) == hash_samples({"m": a.copy()})
+
+
+def test_la_version_d_archive_est_verifiee(tmp_path):
+    """AVANT correction : `RECORD_SCHEMA_VERSION` etait ecrite puis ignoree.
+    Une archive 1.0 porte un result_hash calcule par l'ancienne concatenation
+    non injective ; la relire en silence donnerait un echec d'integrite
+    incomprehensible au lieu d'un message clair."""
+    import json as _json
+
+    from qbridge.record import RunRecord
+
+    q0, q1 = cirq.LineQubit.range(2)
+    circuit = cirq.Circuit(cirq.H(q0), cirq.CX(q0, q1), cirq.measure(q0, q1, key="m"))
+    run = capture(circuit, backend="qsim", seed=7, repetitions=50)
+    RunRecord.from_capture(run).save(tmp_path / "archive")
+
+    entete = tmp_path / "archive" / "record.json"
+    data = _json.loads(entete.read_text(encoding="utf-8"))
+    data["schema_version"] = "1.0"
+    entete.write_text(_json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="schema d'archive"):
+        RunRecord.load(tmp_path / "archive")

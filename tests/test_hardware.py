@@ -278,3 +278,61 @@ def test_le_nom_du_backend_annonce_que_c_est_un_substitut():
     """Un manifeste ne doit jamais laisser croire qu'il vient d'une vraie
     machine."""
     assert SimulatedHardwareBackend.name == "hardware-sim"
+
+
+# ---------- erreur par porte (defaut trouve en auto-revue) ----------
+
+
+def test_l_erreur_de_la_porte_PRECISE_est_utilisee():
+    """AVANT correction : le modele de bruit appelait `mean_gate_error()` pour
+    toutes les portes, ecrasant la finesse par-porte que l'instantane prend
+    soin d'enregistrer avec sa date. Mesure : deux instantanes, l'un a
+    0.01/0.01/0.01 et l'autre a 0.03/0.00/0.00, ont la MEME moyenne et des hash
+    differents — les donnees sont scellees, mais l'usage les traitait
+    identiquement."""
+    d = "2026-08-28T06:00:00+00:00"
+    q = _qubits()
+
+    def snap(erreurs):
+        return CalibrationSnapshot.build(
+            device_id="t",
+            device_version="1",
+            qubits={
+                str(x): {
+                    "t1_us": DatedValue(50.0, d, "us"),
+                    "readout_error": DatedValue(0.01, d, ""),
+                }
+                for x in q
+            },
+            gates={
+                f"x:{x}": {
+                    "gate_error": DatedValue(e, d, ""),
+                    "gate_length_ns": DatedValue(24.0, d, "ns"),
+                }
+                for x, e in zip(q, erreurs)
+            },
+            basis_gates=["x"],
+            coupling_map=[[0, 1], [1, 2]],
+        )
+
+    uniforme = snap([0.01, 0.01, 0.01])
+    concentre = snap([0.03, 0.0, 0.0])
+
+    assert uniforme.mean_gate_error() == concentre.mean_gate_error(), (
+        "les deux instantanes ont bien la meme moyenne : c'est ce qui rend le "
+        "test significatif"
+    )
+    assert uniforme.snapshot_hash != concentre.snapshot_hash
+
+    a = [uniforme.gate_error_for(cirq.X(x)) for x in q]
+    b = [concentre.gate_error_for(cirq.X(x)) for x in q]
+    assert a != b, "le modele confond encore deux appareils differents"
+    assert b == [0.03, 0.0, 0.0]
+
+
+def test_la_chaine_de_repli_de_gate_error_for(snapshot):
+    """Une porte absente de l'instantane retombe sur la moyenne, pas sur zero :
+    ignorer une porte inconnue sous-estimerait le bruit."""
+    inconnue = snapshot.gate_error_for(cirq.H(cirq.LineQubit(99)))
+    assert inconnue == pytest.approx(snapshot.mean_gate_error())
+    assert inconnue > 0

@@ -9,7 +9,7 @@ import cirq
 import numpy as np
 
 from qbridge.backends import BACKENDS, make_backend
-from qbridge.digest import canonical_json, sha256_of_array, sha256_of_text
+from qbridge.digest import canonical_json, sha256_of, sha256_of_array
 from qbridge.manifest import Manifest
 
 
@@ -24,9 +24,22 @@ class CaptureRun:
 
 
 def hash_samples(samples: Dict[str, np.ndarray]) -> str:
-    return sha256_of_text(
-        "".join(f"{k}:{sha256_of_array(samples[k])}" for k in sorted(samples))
-    )
+    """Empreinte d'un jeu de mesures, indexee par cle.
+
+    On hache le JSON canonique d'un dictionnaire, PAS une concatenation de
+    chaines. La concatenation `f"{k}:{hash}"` sans delimiteur n'etait pas
+    injective, et la collision se construit en trois lignes :
+
+        A = {"m": a, "x": b}          ->  "m:" + H1 + "x:" + H2
+        B = {f"m:{H1}x": b}           ->  "m:H1x" + ":" + H2
+
+    Les deux produisaient exactement la meme chaine, donc le meme result_hash
+    pour deux archives de contenus differents. Les cles de mesure sont des
+    chaines arbitraires : rien n'interdisait d'en fabriquer une contenant `:`
+    et de l'hexadecimal. Le JSON canonique echappe et delimite, ce qui rend la
+    representation non ambigue.
+    """
+    return sha256_of({k: sha256_of_array(v) for k, v in samples.items()})
 
 
 def capture(

@@ -29,7 +29,7 @@ from qbridge.capture import CaptureRun, hash_samples
 from qbridge.digest import sha256_of_array
 from qbridge.manifest import Manifest
 
-RECORD_SCHEMA_VERSION = "1.0"
+RECORD_SCHEMA_VERSION = "2.0"
 
 
 @dataclass(frozen=True)
@@ -120,6 +120,18 @@ class RunRecord:
     def load(cls, directory: str | Path) -> "RunRecord":
         d = Path(directory)
         entete = json.loads((d / "record.json").read_text(encoding="utf-8"))
+        # La version d'archive n'etait verifiee NULLE PART : elle etait ecrite
+        # puis ignoree. Une archive 1.0 a un result_hash calcule par l'ancienne
+        # concatenation non injective ; la relire en silence donnerait un echec
+        # d'integrite incomprehensible plutot qu'un message clair.
+        version = entete.get("schema_version")
+        if version != RECORD_SCHEMA_VERSION:
+            raise ValueError(
+                f"Version de schema d'archive incompatible : {version!r} "
+                f"(attendu {RECORD_SCHEMA_VERSION!r}). Les archives 1.0 ont ete "
+                "scellees avec une empreinte de resultats non injective, "
+                "remplacee depuis."
+            )
         samples: Optional[Dict[str, np.ndarray]] = None
         if entete["has_samples"]:
             with np.load(d / "samples.npz") as z:

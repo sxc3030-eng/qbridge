@@ -252,3 +252,29 @@ def test_la_version_de_schema_est_celle_attendue(hmac_signer):
     assert sign_manifest(_manifest(), hmac_signer).schema_version == (
         SIGNATURE_SCHEMA_VERSION
     )
+
+
+def test_le_message_d_erreur_ne_pilote_pas_la_logique(hmac_signer):
+    """AVANT correction : le code testait `"illisible" not in " ".join(motifs)`
+    pour eviter un double message. La logique dependait donc d'un mot francais
+    dans un texte destine a l'utilisateur — traduire ce texte l'aurait changee
+    en silence. Un drapeau explicite l'a remplacee.
+
+    Ce test verifie le comportement observable des deux chemins d'echec.
+    """
+    m = _manifest()
+    sig = sign_manifest(m, hmac_signer)
+
+    non_hexa = Signature.from_dict({**sig.to_dict(), "signature": "zz-pas-hexa"})
+    r1 = verify_manifest_signature(m, non_hexa, hmac_signer)
+    assert r1.valid is False
+    assert "illisible" in r1.detail
+    assert "cryptographiquement invalide" not in r1.detail, (
+        "un seul motif doit etre rapporte pour un seul probleme"
+    )
+
+    fausse = Signature.from_dict({**sig.to_dict(), "signature": "ab" * 32})
+    r2 = verify_manifest_signature(m, fausse, hmac_signer)
+    assert r2.valid is False
+    assert "cryptographiquement invalide" in r2.detail
+    assert "illisible" not in r2.detail

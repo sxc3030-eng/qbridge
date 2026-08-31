@@ -372,12 +372,18 @@ def verify_manifest_signature(
     payload = signing_payload(
         signature.content_hash, signature.algorithm, signature.key_id
     )
+    # Un drapeau explicite plutot qu'une recherche de mot dans les messages.
+    # La version precedente testait `"illisible" not in " ".join(motifs)` :
+    # le comportement dependait alors d'un mot francais dans un texte destine a
+    # l'utilisateur, et traduire ce texte aurait change la logique en silence.
+    illisible = False
     try:
         sig_ok = verifier.verify(payload, bytes.fromhex(signature.signature))
     except ValueError:
         sig_ok = False
+        illisible = True
         motifs.append("signature illisible : ce n'est pas de l'hexadecimal")
-    if not sig_ok and "illisible" not in " ".join(motifs):
+    if not sig_ok and not illisible:
         motifs.append("signature cryptographiquement invalide")
 
     try:
