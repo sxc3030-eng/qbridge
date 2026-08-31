@@ -318,15 +318,29 @@ class _CalibrationNoiseModel(cirq.NoiseModel):
         if self.is_virtual_moment(moment):
             return moment
 
-        if any(cirq.is_measurement(op) for op in moment.operations):
+        mesures = {
+            q
+            for op in moment.operations
+            if cirq.is_measurement(op)
+            for q in op.qubits
+        }
+        if mesures:
             # L'erreur de lecture s'applique AVANT la mesure : c'est l'etat lu
             # qui est errone, pas le bit une fois classique.
+            #
+            # Et UNIQUEMENT aux qubits reellement mesures. L'appliquer a tous
+            # les qubits du moment injectait une inversion de bit reelle dans
+            # l'etat de qubits qui n'etaient pas lus, inversion qui persistait
+            # ensuite dans tout le circuit — une propriete de l'appareil de
+            # mesure transformee en erreur physique sur des qubits voisins.
             avant = [
                 cirq.bit_flip(self._readout_error(q)).on(q)
-                for q in sorted(moment.qubits)
+                for q in sorted(mesures)
                 if self._readout_error(q) > 0
             ]
-            return [cirq.Moment(avant), moment] if avant else [moment]
+            resultat = [cirq.Moment(avant)] if avant else []
+            resultat.append(moment)
+            return resultat
 
         # Deux moments SEPARES : un cirq.Moment n'accepte pas deux operations
         # sur le meme qubit, et depolarisation puis relaxation s'appliquent

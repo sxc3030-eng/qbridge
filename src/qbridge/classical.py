@@ -561,9 +561,39 @@ class SourceDriftReport:
         return bool(self.drifted)
 
     @property
+    def partially_sealed(self) -> Tuple[str, ...]:
+        """Roles verifies mais dont une partie echappe au sceau.
+
+        Le cas type est un decorateur : `inspect.unwrap` fait remonter a la
+        fonction nue, donc le texte scelle est celui d'AVANT decoration. Un
+        decorateur qui change le resultat passe alors pour « inchange ».
+        L'avertissement existait deja ; personne ne le lisait.
+        """
+        return tuple(
+            sorted(
+                role
+                for role, entree in self.detail.items()
+                if entree.get("warnings")
+            )
+        )
+
+    @property
     def fully_verified(self) -> bool:
-        """Vrai seulement si CHAQUE role scelle a ete confronte et retrouve."""
-        return not (self.drifted or self.unverifiable or self.missing)
+        """Vrai seulement si CHAQUE role scelle a ete confronte, retrouve, et
+        scelle EN ENTIER.
+
+        Les avertissements comptent. Sans eux, une fonction decoree ressortait
+        `fully_verified=True` alors qu'un decorateur non scelle pouvait changer
+        son resultat — et le README propose justement `.has_drift` comme
+        verdict d'une ligne. L'API documentee ne pouvait pas voir le trou
+        documente.
+        """
+        return not (
+            self.drifted
+            or self.unverifiable
+            or self.missing
+            or self.partially_sealed
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -572,6 +602,7 @@ class SourceDriftReport:
             "unverifiable": dict(self.unverifiable),
             "missing": list(self.missing),
             "unknown": list(self.unknown),
+            "partially_sealed": list(self.partially_sealed),
             "detail": {r: dict(d) for r, d in self.detail.items()},
         }
 
@@ -609,6 +640,8 @@ def verify_source_unchanged(
             "current_hash": actuel.source_hash,
             "sealed_qualname": scelle.qualname,
             "current_qualname": actuel.qualname,
+            "sealed_module": scelle.module,
+            "current_module": actuel.module,
             "warnings": list(scelle.warnings) + list(actuel.warnings),
         }
 
@@ -618,6 +651,18 @@ def verify_source_unchanged(
         elif not actuel.is_verifiable:
             invalides[role] = f"vivant {actuel.evidence}: {actuel.reason}"
             entree["status"] = "unverifiable"
+        elif (actuel.module, actuel.qualname) != (scelle.module, scelle.qualname):
+            # Meme texte source, autre identite. Deux fonctions redigees a
+            # l'identique dans des modules differents resolvent des globales
+            # differentes : `SEUIL = 0.5` ici, `SEUIL = 0.0` la, et le meme
+            # code publie deux resultats opposes. Ne comparer que le hash du
+            # TEXTE laissait passer cette substitution sans un mot.
+            derives.append(role)
+            entree["status"] = "drifted"
+            entree["reason"] = (
+                f"identite differente : scelle {scelle.module}.{scelle.qualname}, "
+                f"vivant {actuel.module}.{actuel.qualname}"
+            )
         elif actuel.source_hash == scelle.source_hash:
             inchanges.append(role)
             entree["status"] = "unchanged"

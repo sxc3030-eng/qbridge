@@ -79,17 +79,26 @@ seule dépendance optionnelle du projet.
 manifeste : `content_hash` couvre tous les champs, donc l'y mettre changerait le
 hash qu'elle signe.
 
+**On signe l'ARCHIVE, pas la seule recette.** `sign_record` couvre le manifeste
+*et* les tirages ; `sign_manifest` ne couvre que la recette et le dit. Signer le
+seul `content_hash` du manifeste laissait `result_hash` — qui vit dans
+`record.json` — hors de toute signature : on remplaçait `samples.npz`, on
+recalculait `result_hash` en deux lignes, et l'archive se vérifiait « valide et
+opposable ». Les bitstrings, la seule donnée non regénérable, étaient exactement
+ce que la signature n'atteignait pas.
+
 **On ne signe pas le hash nu**, mais un lien canonique
-`{schéma, algorithme, key_id, content_hash}`. Signer le hash seul laisserait
-deux failles : une signature HMAC pourrait être présentée comme une ed25519
-(substitution d'algorithme), et une signature de la clé A revendiquée pour la
-clé B (confusion de clés).
+`{schéma, algorithme, key_id, portée, content_hash}`. Sans ces liens : une
+signature HMAC présentée comme une ed25519 (substitution d'algorithme), une
+signature de la clé A revendiquée pour la clé B (confusion de clés), ou une
+signature de recette présentée comme couvrant une archive.
 
 **Une signature authentique d'un *autre* document est refusée.** La vérification
-contrôle quatre choses séparément — manifeste cohérent, algorithme attendu,
-signature qui vise *ce* document, cryptographie valide — et dit laquelle a
-échoué. Un vérificateur naïf qui validerait seulement la cryptographie
-accepterait une signature vraie collée sur un faux document.
+contrôle **six** choses séparément — document cohérent, algorithme attendu,
+identité de clé attendue, portée attendue, signature qui vise *ce* document,
+cryptographie valide — et dit laquelle a échoué. Un vérificateur naïf qui
+validerait seulement la cryptographie accepterait une signature vraie collée sur
+un faux document.
 
 ### Ce que qbridge ne fait pas
 
@@ -143,13 +152,16 @@ qbridge verify runs/essai
 ```
 
 Puis `qbridge replay`, `qbridge info`, `qbridge diff`, `qbridge sign` et
-`qbridge keygen` (tous acceptent `--json`).
+`qbridge keygen`. `verify`, `info`, `diff`, `sign` et `keygen` acceptent
+`--json` ; `capture` et `replay` ne l'acceptent pas encore.
 `verify`, `info`, `diff`, `sign` et `keygen` n'exécutent **aucun circuit** —
 c'est vérifié par des tests qui cassent volontairement les deux backends.
 
 Codes de sortie : `0` conforme · `1` compatible seulement statistiquement ·
 `2` divergent · `3` erreur · `4` indéterminé. Un verdict que la table ne connaît
-pas retombe sur `3`, jamais sur `0` : une CI croirait à une réussite.
+pas retombe sur `3`, jamais sur `0` : une CI croirait à une réussite. Une erreur
+d'usage (option mal orthographiée) rend `3` et non `2` — sinon une faute de
+frappe se lirait comme une divergence physique.
 
 ## Capture du versant classique
 

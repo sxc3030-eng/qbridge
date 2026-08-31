@@ -49,8 +49,18 @@ def main() -> None:
     print(f"  verdict : {r.verdict.name} — {r.detail}")
     print("  -> le nombre de coeurs de la machine de rejeu n'a aucune importance")
 
-    bandeau("4. Rejeu sur l'oracle Cirq — moteur entierement different")
-    r = replay(Manifest.load(chemin), backend="cirq-reference")
+    bandeau("4. Rejeu sur l'oracle Cirq — une option scellee bloque")
+    try:
+        replay(Manifest.load(chemin), backend="cirq-reference")
+        print("  !! l'option scellee aurait du bloquer le rejeu")
+    except ValueError as e:
+        print(f"  refuse : {e}")
+    print("  -> l'oracle n'accepte aucune option ; les JETER en silence")
+    print("     rendrait le rejeu faussement rassurant.")
+
+    bandeau("4bis. Le meme rejeu, sur un manifeste sans option scellee")
+    nu = capture(circuit, backend="qsim", seed=7)
+    r = replay(nu.manifest, backend="cirq-reference")
     print(f"  verdict      : {r.verdict.name} — {r.detail}")
     print(f"  noyau change : {r.kernel_changed}")
 
@@ -121,7 +131,37 @@ def main() -> None:
     print(f"  verdict : {r.verdict.name} — {r.detail}")
     print("  -> la reference vient du disque, scellee avant : pas de tautologie")
 
-    bandeau("10. Un seul bit de tirage falsifie")
+    bandeau("10. Signature de l'ARCHIVE, pas de la seule recette")
+    from qbridge.signing import (
+        Ed25519Signer,
+        Ed25519Verifier,
+        sign_record,
+        verify_record_signature,
+    )
+
+    signeur, _priv, publique = Ed25519Signer.generate("demo")
+    signature = sign_record(RunRecord.load(dossier), signeur)
+    print(f"  portee     : {signature.scope}  (et non 'manifest')")
+    verif = Ed25519Verifier(publique, "demo")
+    print(f"  verifiee   : {verify_record_signature(RunRecord.load(dossier), signature, verif).valid}")
+
+    faux = RunRecord.load(dossier)
+    faux.samples["m"][0][0] ^= 1
+    from qbridge.capture import hash_samples
+
+    substitue = RunRecord(
+        schema_version=faux.schema_version,
+        manifest=faux.manifest,
+        result_hash=hash_samples(faux.samples),
+        samples=faux.samples,
+        state_vector_hash=faux.state_vector_hash,
+    )
+    r = verify_record_signature(substitue, signature, verif)
+    print(f"  tirages remplaces + result_hash recalcule -> valide ? {r.valid}")
+    print("  -> le manifeste et la signature sont INTOUCHES : c'est la portee")
+    print("     d'archive qui attrape la substitution.")
+
+    bandeau("11. Un seul bit de tirage falsifie")
     corrompu = RunRecord.load(dossier)
     corrompu.samples["m"][0][0] ^= 1
     rapport = verify_archival(corrompu)

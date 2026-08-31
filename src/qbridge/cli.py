@@ -430,11 +430,14 @@ def _cmd_keygen(args: argparse.Namespace) -> int:
 
 def _cmd_sign(args: argparse.Namespace) -> int:
     """Signe le manifeste d'un enregistrement, en signature detachee."""
-    from qbridge.signing import SIGNATURE_FILENAME, sign_manifest
+    from qbridge.signing import SIGNATURE_FILENAME, sign_record
 
     record = _load_record(args.directory)
     signer = _build_signer(args)
-    signature = sign_manifest(record.manifest, signer)
+    # sign_record et non sign_manifest : le manifeste ne contient aucun
+    # resultat, donc signer sa seule empreinte laisserait les tirages
+    # remplacables sous une signature restee valide.
+    signature = sign_record(record, signer)
 
     destination = Path(args.directory) / SIGNATURE_FILENAME
     signature.save(destination)
@@ -473,7 +476,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     from qbridge.signing import (
         SIGNATURE_FILENAME,
         Signature,
-        verify_manifest_signature,
+        verify_record_signature,
     )
 
     record = _load_record(args.directory)
@@ -513,7 +516,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
                 "  Fournir --hmac-key ou --public-key avec --key-id pour la verifier.",
             ]
         else:
-            rapport = verify_manifest_signature(record.manifest, signature, verifieur)
+            rapport = verify_record_signature(record, signature, verifieur)
             sig_info["verified"] = True
             sig_info["valid"] = rapport.valid
             sig_info["binds_this_manifest"] = rapport.binds_this_manifest
@@ -1176,7 +1179,12 @@ def main(argv: list[str] | None = None) -> int:
         # argparse ecrit lui-meme son message (--help, argument manquant).
         # On convertit en code de retour pour que `main` reste appelable
         # directement, sans sous-processus.
-        return int(exc.code or 0)
+        #
+        # argparse rend 2 pour toute erreur d'usage, or 2 est reserve ici a
+        # DIVERGENT : une CI qui se trompe de nom d'option lirait une
+        # divergence physique. On remappe vers EXIT_ERROR.
+        code = int(exc.code or 0)
+        return EXIT_ERROR if code == 2 else code
 
     as_json = bool(getattr(args, "json_output", False))
     try:

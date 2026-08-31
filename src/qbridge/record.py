@@ -26,7 +26,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from qbridge.capture import CaptureRun, hash_samples
-from qbridge.digest import sha256_of_array
+from qbridge.digest import sha256_of, sha256_of_array
 from qbridge.manifest import Manifest
 
 RECORD_SCHEMA_VERSION = "2.0"
@@ -54,6 +54,30 @@ class RunRecord:
                 if run.state_vector is not None
                 else None
             ),
+        )
+
+    def content_hash(self) -> str:
+        """Empreinte de l'archive ENTIERE : recette plus resultats.
+
+        Le `content_hash` du manifeste ne couvre que la recette — c'est
+        volontaire, le manifeste ne contient aucun resultat. Mais signer ce
+        hash-la seul laissait les tirages hors de toute signature : on
+        remplacait `samples.npz`, on recalculait `result_hash` (public, deux
+        lignes), on ne touchait ni a `manifest.json` ni a `signature.json`, et
+        l'archive se verifiait « valide et opposable ». Les bitstrings, seule
+        donnee non regenerable de la chaine, etaient exactement ce que la
+        signature n'atteignait pas.
+
+        C'est CE hash que l'on signe pour une archive.
+        """
+        return sha256_of(
+            {
+                "record_schema_version": self.schema_version,
+                "manifest_content_hash": self.manifest.content_hash,
+                "result_hash": self.result_hash,
+                "state_vector_hash": self.state_vector_hash,
+                "measurement_keys": sorted(self.samples) if self.samples else [],
+            }
         )
 
     def verify_integrity(self) -> None:

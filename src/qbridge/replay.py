@@ -20,21 +20,38 @@ from qbridge.verdict import (
 
 
 def _plafonner_selon_le_backend(
-    comparaison: ComparisonResult, impl: Any
+    comparaison: ComparisonResult, impl: Any, backend_capture: str = ""
 ) -> ComparisonResult:
-    """Empeche un backend non deterministe d'annoncer un verdict trop fort.
+    """Empeche un verdict trop fort quand l'un des deux backends ne garantit
+    pas la reproductibilite bit-pour-bit.
 
-    Un backend materiel ne peut PAS reproduire un resultat bit-pour-bit : le
-    bruit physique n'est pas rejouable. S'il ressort BIT_EXACT, c'est un
-    artefact, pas une preuve. On plafonne a STATISTICALLY_COMPATIBLE.
+    Les DEUX comptent, et n'examiner que celui du rejeu etait une faille :
+    une archive capturee sur materiel, rejouee avec `--backend qsim`, ressortait
+    BIT_EXACT. Le materiel n'a jamais produit un resultat bit-reproductible ; le
+    rejouer sur un simulateur ne le rend pas tel, ca blanchit l'archive.
     """
-    if impl.is_bit_exact_replayable():
+    incapables = []
+    if not impl.is_bit_exact_replayable():
+        incapables.append(impl.name)
+    if backend_capture and backend_capture != impl.name:
+        from qbridge.backends import BACKENDS
+
+        classe = BACKENDS.get(backend_capture)
+        if classe is not None:
+            try:
+                temoin = classe() if backend_capture not in NEEDS_CALIBRATION else classe(None)
+                if not temoin.is_bit_exact_replayable():
+                    incapables.append(f"{backend_capture} (capture)")
+            except Exception:  # pragma: no cover - backend non constructible
+                pass
+
+    if not incapables:
         return comparaison
     if comparaison.verdict >= Verdict.STATISTICALLY_COMPATIBLE:
         return comparaison
     return ComparisonResult(
         Verdict.STATISTICALLY_COMPATIBLE,
-        f"{comparaison.detail} (plafonne : le backend {impl.name} ne garantit "
+        f"{comparaison.detail} (plafonne : {', '.join(incapables)} ne garantit "
         "pas la reproductibilite bit-pour-bit)",
         infidelity=comparaison.infidelity,
         p_value=comparaison.p_value,
@@ -113,7 +130,22 @@ def replay(
         options.update(override_performance)
 
     if nom == "cirq-reference":
-        options = {}  # l'oracle n'accepte aucune option d'execution
+        # L'oracle n'accepte aucune option. Les JETER en silence contournerait
+        # le verrou par niveau que `override_performance` refuse bruyamment
+        # quinze lignes plus haut : un changement de backend suffisait a se
+        # debarrasser d'une option SEMANTIC scellee. Une option ignoree en
+        # silence est precisement ce qui rend un rejeu faussement rassurant.
+        perdues = split_options(options, mode)
+        bloquantes = {**perdues[Tier.SEMANTIC], **perdues[Tier.NUMERIC]}
+        if bloquantes:
+            raise ValueError(
+                f"Le backend {nom!r} n'accepte aucune option d'execution, mais "
+                f"ce manifeste en scelle qui influencent le resultat : "
+                f"{sorted(bloquantes)}. Les ignorer rendrait le rejeu "
+                "faussement rassurant. Rejouer sur le backend d'origine, ou "
+                "accepter explicitement de comparer deux executions differentes."
+            )
+        options = {}
 
     calibration = manifest.calibration()
     impl = make_backend(nom, calibration if nom in NEEDS_CALIBRATION else None)
@@ -156,7 +188,9 @@ def replay(
     else:
         comparaison = compare_samples(origine.samples, rejoue)
 
-    comparaison = _plafonner_selon_le_backend(comparaison, impl)
+    comparaison = _plafonner_selon_le_backend(
+        comparaison, impl, manifest.backend_name
+    )
     return ReplayReport(
         verdict=comparaison.verdict,
         detail=comparaison.detail,
@@ -312,7 +346,9 @@ def replay_record(
         )
         comparaison = compare_samples(record.samples, rejoue)
 
-    comparaison = _plafonner_selon_le_backend(comparaison, impl)
+    comparaison = _plafonner_selon_le_backend(
+        comparaison, impl, manifest.backend_name
+    )
     return ReplayReport(
         verdict=comparaison.verdict,
         detail=comparaison.detail,

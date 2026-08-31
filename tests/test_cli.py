@@ -729,7 +729,7 @@ def test_option_value_that_json_cannot_represent_is_refused():
 
 def test_main_returns_a_code_without_a_subcommand():
     """argparse sort en SystemExit ; `main` doit renvoyer un code, pas lever."""
-    assert main([]) != EXIT_OK
+    assert main([]) == EXIT_ERROR  # et surtout pas 2, reserve a DIVERGENT
 
 
 def test_main_returns_a_code_on_an_unknown_subcommand():
@@ -755,9 +755,21 @@ def test_chaque_verdict_a_un_code_de_sortie():
     from qbridge.cli import _exit_code_for
     from qbridge.verdict import Verdict
 
+    # `isinstance(code, int)` seul passait meme avec une table VIDE, puisque
+    # `.get` rend EXIT_ERROR par defaut : BIT_EXACT aurait rendu 3 et le test
+    # serait reste vert. On verifie donc la correspondance REELLE.
+    from qbridge.cli import EXIT_DIVERGENT, EXIT_INDETERMINATE, EXIT_MISMATCH
+
+    attendu = {
+        Verdict.BIT_EXACT: EXIT_OK,
+        Verdict.NUMERICALLY_EQUIVALENT: EXIT_OK,
+        Verdict.STATISTICALLY_COMPATIBLE: EXIT_MISMATCH,
+        Verdict.DIVERGENT: EXIT_DIVERGENT,
+        Verdict.INDETERMINATE: EXIT_INDETERMINATE,
+    }
     for verdict in Verdict:
-        code = _exit_code_for(verdict)
-        assert isinstance(code, int)
+        assert verdict in attendu, f"{verdict.name} n'a pas de code attendu"
+        assert _exit_code_for(verdict) == attendu[verdict]
 
 
 def test_indetermine_ne_vaut_pas_succes():

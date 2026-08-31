@@ -47,7 +47,7 @@ from typing import Any, Dict, Protocol, Tuple, runtime_checkable
 
 from qbridge.digest import canonical_json
 
-SIGNATURE_SCHEMA_VERSION = "1.0"
+SIGNATURE_SCHEMA_VERSION = "2.0"
 
 SIGNATURE_FILENAME = "signature.json"
 """Nom du fichier detache, a cote de `manifest.json` dans un dossier d'archive."""
@@ -72,18 +72,39 @@ class SignatureAlgorithm(str, Enum):
 # --------------------------------------------------------------------------
 
 
-def signing_payload(content_hash: str, algorithm: str, key_id: str) -> bytes:
+class SignatureScope(str, Enum):
+    """Ce sur quoi porte une signature.
+
+    La distinction est necessaire, pas cosmetique : une signature de RECETTE ne
+    dit rien des resultats. Confondre les deux permettait de remplacer les
+    tirages sous une signature restee valide.
+    """
+
+    MANIFEST = "manifest"
+    """La recette seule. Ne couvre AUCUN resultat."""
+
+    RECORD = "record"
+    """L'archive entiere : recette et tirages."""
+
+
+def signing_payload(
+    content_hash: str,
+    algorithm: str,
+    key_id: str,
+    scope: str = SignatureScope.MANIFEST.value,
+) -> bytes:
     """Construit le message effectivement signe.
 
-    Lie l'algorithme et l'identifiant de cle au hash. Sans ce lien, une
-    signature resterait valide apres qu'on ait change l'algorithme ou la cle
-    declares dans le fichier detache.
+    Lie l'algorithme, l'identifiant de cle ET la portee au hash. Sans le lien
+    de portee, une signature de recette pourrait etre presentee comme couvrant
+    une archive complete.
     """
     return canonical_json(
         {
             "qbridge_signature_schema": SIGNATURE_SCHEMA_VERSION,
             "algorithm": algorithm,
             "key_id": key_id,
+            "scope": scope,
             "content_hash": content_hash,
         }
     ).encode("utf-8")
@@ -248,6 +269,7 @@ class Signature:
     schema_version: str
     algorithm: str
     key_id: str
+    scope: str
     content_hash: str
     signature: str
     created_at: str
@@ -282,22 +304,41 @@ class Signature:
         return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
-def sign_manifest(manifest: Any, signer: Signer) -> Signature:
-    """Signe un manifeste et rend la signature detachee.
-
-    Le manifeste est verifie AVANT signature : signer un document incoherent
-    reviendrait a attester une incoherence.
-    """
-    manifest.verify_self()
-    payload = signing_payload(manifest.content_hash, signer.algorithm, signer.key_id)
+def _sign(hash_scelle: str, scope: str, signer: Signer) -> Signature:
+    payload = signing_payload(hash_scelle, signer.algorithm, signer.key_id, scope)
     return Signature(
         schema_version=SIGNATURE_SCHEMA_VERSION,
         algorithm=signer.algorithm,
         key_id=signer.key_id,
-        content_hash=manifest.content_hash,
+        scope=scope,
+        content_hash=hash_scelle,
         signature=signer.sign(payload).hex(),
         created_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
     )
+
+
+def sign_manifest(manifest: Any, signer: Signer) -> Signature:
+    """Signe une RECETTE seule. Ne couvre aucun resultat.
+
+    Le manifeste est verifie AVANT signature : signer un document incoherent
+    reviendrait a attester une incoherence.
+
+    Pour une archive contenant des tirages, utiliser `sign_record` — cette
+    fonction-ci laisserait les bitstrings hors de la signature.
+    """
+    manifest.verify_self()
+    return _sign(manifest.content_hash, SignatureScope.MANIFEST.value, signer)
+
+
+def sign_record(record: Any, signer: Signer) -> Signature:
+    """Signe une ARCHIVE entiere : recette ET tirages.
+
+    C'est ce qu'il faut pour une archive. `sign_manifest` ne couvrirait que la
+    recette, laissant les bitstrings — la seule donnee non regenerable —
+    remplacables sous une signature restee valide.
+    """
+    record.verify_integrity()
+    return _sign(record.content_hash(), SignatureScope.RECORD.value, signer)
 
 
 # --------------------------------------------------------------------------
@@ -324,27 +365,59 @@ class SignatureReport:
     detail: str
 
 
+def verify_record_signature(
+    record: Any, signature: Signature, verifier: Verifier
+) -> SignatureReport:
+    """Verifie une signature d'ARCHIVE : recette et tirages."""
+    return _verify(
+        record.content_hash(),
+        SignatureScope.RECORD.value,
+        lambda: record.verify_integrity(),
+        signature,
+        verifier,
+    )
+
+
 def verify_manifest_signature(
     manifest: Any, signature: Signature, verifier: Verifier
 ) -> SignatureReport:
     """Verifie une signature detachee contre un manifeste.
 
-    Quatre controles independants, tous necessaires :
+    Verifie une signature de RECETTE. Ne dit rien des resultats.
+    """
+    return _verify(
+        manifest.content_hash,
+        SignatureScope.MANIFEST.value,
+        lambda: manifest.verify_self(),
+        signature,
+        verifier,
+    )
 
-    1. Le manifeste est coherent avec lui-meme.
+
+def _verify(
+    hash_attendu: str,
+    scope_attendu: str,
+    controle_integrite: Any,
+    signature: Signature,
+    verifier: Verifier,
+) -> SignatureReport:
+    """Six controles independants, tous necessaires :
+
+    1. Le document est coherent avec lui-meme.
     2. L'algorithme declare est bien celui du verifieur.
-    3. La signature vise CE manifeste (meme `content_hash`) — sinon une
-       signature authentique pour un autre document pourrait etre presentee ici.
-    4. La signature est cryptographiquement valide.
+    3. Le key_id declare est bien celui attendu par le verifieur.
+    4. La portee declaree est celle qu'on verifie.
+    5. La signature vise CE document (meme hash).
+    6. La signature est cryptographiquement valide.
     """
     motifs = []
 
     manifeste_ok = True
     try:
-        manifest.verify_self()
+        controle_integrite()
     except ValueError as exc:
         manifeste_ok = False
-        motifs.append(f"manifeste altere : {exc}")
+        motifs.append(f"document altere : {exc}")
 
     if signature.algorithm != verifier.algorithm:
         return SignatureReport(
@@ -361,16 +434,54 @@ def verify_manifest_signature(
             ),
         )
 
-    lie = signature.content_hash == manifest.content_hash
+    # Le key_id du verifieur n'etait compare a RIEN : le message signe liait
+    # l'identite fournie par l'attaquant a elle-meme, donc `--key-id` pouvait
+    # valoir n'importe quoi et la signature restait « valide ».
+    if signature.key_id != verifier.key_id:
+        return SignatureReport(
+            valid=False,
+            manifest_intact=manifeste_ok,
+            binds_this_manifest=False,
+            signature_valid=False,
+            algorithm=signature.algorithm,
+            key_id=signature.key_id,
+            third_party_verifiable=False,
+            detail=(
+                f"identite de cle incompatible : la signature declare "
+                f"{signature.key_id!r}, le verifieur attend {verifier.key_id!r}"
+            ),
+        )
+
+    if getattr(signature, "scope", None) != scope_attendu:
+        return SignatureReport(
+            valid=False,
+            manifest_intact=manifeste_ok,
+            binds_this_manifest=False,
+            signature_valid=False,
+            algorithm=signature.algorithm,
+            key_id=signature.key_id,
+            third_party_verifiable=False,
+            detail=(
+                f"portee incompatible : la signature couvre "
+                f"{getattr(signature, 'scope', None)!r}, on verifie "
+                f"{scope_attendu!r}. Une signature de recette ne dit rien des "
+                "resultats."
+            ),
+        )
+
+    lie = signature.content_hash == hash_attendu
     if not lie:
         motifs.append(
             "la signature vise un autre document : elle porte sur "
-            f"{signature.content_hash[:16]}..., ce manifeste vaut "
-            f"{manifest.content_hash[:16]}..."
+            f"{signature.content_hash[:16]}..., ce document vaut "
+            f"{hash_attendu[:16]}..."
         )
 
     payload = signing_payload(
-        signature.content_hash, signature.algorithm, signature.key_id
+        signature.content_hash,
+        signature.algorithm,
+        signature.key_id,
+        signature.scope,
     )
     # Un drapeau explicite plutot qu'une recherche de mot dans les messages.
     # La version precedente testait `"illisible" not in " ".join(motifs)` :
