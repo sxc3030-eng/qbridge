@@ -439,6 +439,27 @@ def _cmd_replay(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------
 
 
+def _classical_summary(manifest: Any) -> Any:
+    """Resume du contexte classique scelle, ou None s'il n'y en a pas.
+
+    Ne fait AUCUNE execution : tout se lit dans le manifeste.
+    """
+    if manifest.classical_json is None:
+        return None
+    try:
+        ctx = manifest.classical()
+    except Exception as exc:  # contexte illisible : le dire, ne pas le taire
+        return {"error": f"contexte classique illisible : {exc}"}
+    return {
+        "context_hash": ctx.context_hash,
+        "roles": sorted(ctx.callables),
+        "verifiable_roles": list(ctx.verifiable_roles()),
+        "evidence": dict(ctx.evidence),
+        "input_hash": ctx.input_hash,
+        "distributions_pinned": len(ctx.environment.get("distributions", [])),
+    }
+
+
 def _cmd_info(args: argparse.Namespace) -> int:
     """Resume un enregistrement. N'execute rien."""
     record = _load_record(args.directory)
@@ -453,6 +474,7 @@ def _cmd_info(args: argparse.Namespace) -> int:
         "manifest_schema_version": manifest.schema_version,
         "created_at": manifest.created_at,
         "semantic_hash": manifest.semantic_hash,
+        "content_hash": manifest.content_hash,
         "circuit_hash": manifest.circuit_hash,
         "mode": manifest.mode,
         "backend": {
@@ -474,6 +496,7 @@ def _cmd_info(args: argparse.Namespace) -> int:
         "total_shots": sum(shots.values()),
         "result_hash": record.result_hash,
         "state_vector_hash": record.state_vector_hash,
+        "classical": _classical_summary(manifest),
     }
 
     text = [
@@ -494,6 +517,7 @@ def _cmd_info(args: argparse.Namespace) -> int:
         ),
         _line("bruit", "present" if manifest.noise_json is not None else "aucun"),
         _line("hash semantique", manifest.semantic_hash),
+        _line("hash du contenu", manifest.content_hash),
         _line("hash du circuit", manifest.circuit_hash),
         _line("hash du resultat", record.result_hash),
         _line(

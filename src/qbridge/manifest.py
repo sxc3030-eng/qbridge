@@ -4,10 +4,24 @@ Le manifeste ne contient JAMAIS d'etat quantique. Le no-cloning l'interdit sur
 materiel reel, et accepter un etat depuis un simulateur creerait une API qui ne
 peut pas survivre au passage au materiel. On ne scelle que la recette.
 
-Le `semantic_hash` couvre : le circuit, le seed, le mode, les options de niveau
-SEMANTIC et NUMERIC pour ce mode, et le noyau SIMD. Il EXCLUT les options de
-niveau PERFORMANCE et le reste de l'environnement — parce qu'il est mesure
-qu'elles ne changent pas le resultat.
+DEUX hashes, aux responsabilites deliberement distinctes :
+
+- `semantic_hash` repond a « le rejeu produira-t-il le meme resultat quantique ? ».
+  Il couvre le circuit, le seed, le mode, les options SEMANTIC et NUMERIC pour ce
+  mode, et le noyau SIMD. Il EXCLUT les options PERFORMANCE et l'environnement,
+  parce qu'il est MESURE qu'elles ne changent pas le resultat. Il exclut aussi le
+  contexte classique : le code qui reduit les tirages ne peut pas modifier
+  l'execution quantique, et l'y inclure ferait diverger un manifeste dont seule
+  la post-analyse a change.
+
+- `content_hash` repond a « ce document est-il intact ? ». Il couvre TOUS les
+  champs, y compris ceux que le semantic_hash ignore a dessein : backend_version,
+  created_at, environment, performance_options, contexte classique. Sans lui, ces
+  champs pourraient etre reecrits sans que rien ne le signale.
+
+Confondre les deux est l'erreur a ne pas commettre : un hash unique force a
+choisir entre « detecter toute modification » et « ne pas invalider un rejeu
+pour une raison qui n'en est pas une ».
 """
 
 from __future__ import annotations
@@ -26,7 +40,7 @@ from qbridge.fingerprint import environment_fingerprint, kernel_fingerprint
 from qbridge.modes import ExecutionMode, detect_mode
 from qbridge.tiers import Tier, split_options
 
-MANIFEST_SCHEMA_VERSION = "1.0"
+MANIFEST_SCHEMA_VERSION = "2.0"
 
 
 @dataclass(frozen=True)
@@ -48,7 +62,12 @@ class Manifest:
     performance_options: Dict[str, Any]
     kernel: Dict[str, Any]
     environment: Dict[str, Any]
+    classical_json: Optional[str] = None
+    """`ClassicalContext` serialise : le code qui a bati le circuit et celui qui
+    reduira les tirages, plus l'environnement Python epingle. C'est ce qui rend
+    les chiffres publies regenerables sans ressource quantique."""
     semantic_hash: str = field(default="")
+    content_hash: str = field(default="")
 
     @classmethod
     def build(
@@ -61,6 +80,7 @@ class Manifest:
         repetitions: Optional[int],
         options: Dict[str, Any],
         noise_json: Optional[str],
+        classical_json: Optional[str] = None,
     ) -> "Manifest":
         if seed is None:
             raise ValueError(
@@ -86,8 +106,10 @@ class Manifest:
             performance_options=parts[Tier.PERFORMANCE],
             kernel=kernel_fingerprint(),
             environment=environment_fingerprint(),
+            classical_json=classical_json,
         )
-        return cls(**{**brut.__dict__, "semantic_hash": brut._compute_semantic_hash()})
+        scelle = cls(**{**brut.__dict__, "semantic_hash": brut._compute_semantic_hash()})
+        return cls(**{**scelle.__dict__, "content_hash": scelle._compute_content_hash()})
 
     def _compute_semantic_hash(self) -> str:
         """Hash de tout ce qui influence le resultat."""
@@ -106,10 +128,35 @@ class Manifest:
             }
         )
 
+    def _compute_content_hash(self) -> str:
+        """Hash de TOUS les champs sauf lui-meme.
+
+        Construit par enumeration des champs de la dataclass plutot que par une
+        liste ecrite a la main : un champ ajoute plus tard est couvert
+        automatiquement. Une liste manuelle laisserait silencieusement un
+        nouveau champ hors du sceau — c'est exactement ainsi que `circuit_json`
+        etait reste non couvert.
+        """
+        return sha256_of(
+            {
+                f.name: getattr(self, f.name)
+                for f in fields(self)
+                if f.name != "content_hash"
+            }
+        )
+
+    def classical(self) -> Optional[Any]:
+        """Reconstruit le `ClassicalContext` scelle, s'il y en a un."""
+        if self.classical_json is None:
+            return None
+        from qbridge.classical import ClassicalContext
+
+        return ClassicalContext.from_dict(json.loads(self.classical_json))
+
     def verify_self(self) -> None:
         """Verifie la coherence interne du manifeste. Leve ValueError sinon.
 
-        Trois controles, chacun couvrant une faille reelle :
+        Quatre controles, chacun couvrant une faille reelle :
 
         1. `circuit_hash` doit correspondre a `circuit_json`. Sans ce controle,
            `circuit_hash` n'est que decoratif : on peut remplacer le circuit en
@@ -121,7 +168,10 @@ class Manifest:
            porte derobee : y ecrire `cpu_threads` en mode midcircuit contourne
            silencieusement le verrouillage que `override_performance` refuse
            bruyamment.
-        3. Le hash semantique doit correspondre au contenu.
+        3. Le hash semantique doit correspondre a ce qui determine le resultat.
+        4. Le hash de contenu doit couvrir le document entier — y compris les
+           champs que le hash semantique ignore a dessein (backend_version,
+           created_at, environment, options de performance, contexte classique).
         """
         recalcule = sha256_of_text(self.circuit_json)
         if recalcule != self.circuit_hash:
@@ -154,6 +204,16 @@ class Manifest:
                 "Echec du controle d'integrite du manifeste : il a ete modifie. "
                 f"hash stocke={self.semantic_hash[:16]}... "
                 f"hash recalcule={attendu_hash[:16]}..."
+            )
+
+        attendu_contenu = self._compute_content_hash()
+        if attendu_contenu != self.content_hash:
+            raise ValueError(
+                "Echec du controle d'integrite du contenu : un champ hors du "
+                "perimetre semantique a ete modifie (backend_version, created_at, "
+                "environment, options de performance ou contexte classique). "
+                f"content_hash stocke={self.content_hash[:16]}... "
+                f"recalcule={attendu_contenu[:16]}..."
             )
 
     def execution_mode(self) -> ExecutionMode:
@@ -211,7 +271,7 @@ class Manifest:
             raise ValueError(
                 f"Champs inconnus dans le manifeste : {sorted(inconnus)}"
             )
-        manquants = connus - set(data) - {"semantic_hash"}
+        manquants = connus - set(data)
         if manquants:
             raise ValueError(
                 f"Champs absents du manifeste : {sorted(manquants)}"

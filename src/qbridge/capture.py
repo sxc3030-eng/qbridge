@@ -9,7 +9,7 @@ import cirq
 import numpy as np
 
 from qbridge.backends import BACKENDS
-from qbridge.digest import sha256_of_array, sha256_of_text
+from qbridge.digest import canonical_json, sha256_of_array, sha256_of_text
 from qbridge.manifest import Manifest
 
 
@@ -37,11 +37,18 @@ def capture(
     repetitions: Optional[int] = None,
     options: Optional[Dict[str, Any]] = None,
     noise: Optional[cirq.NoiseModel] = None,
+    classical: Optional[Any] = None,
 ) -> CaptureRun:
     """Execute `circuit` et renvoie un `CaptureRun` scelle.
 
     Si `repetitions` est fourni on echantillonne ; sinon on calcule le vecteur
     d'etat complet.
+
+    `classical` accepte un `ClassicalContext` (voir `capture_classical`) : le
+    code qui a bati le circuit et celui qui reduira les tirages, plus
+    l'environnement Python epingle. C'est ce qui complete la garantie
+    archivistique — sans lui, on archive des bitstrings que plus personne ne
+    saura interpreter.
     """
     if backend not in BACKENDS:
         raise KeyError(
@@ -58,6 +65,9 @@ def capture(
         repetitions=repetitions,
         options=options,
         noise_json=cirq.to_json(noise) if noise is not None else None,
+        classical_json=(
+            canonical_json(classical.to_dict()) if classical is not None else None
+        ),
     )
 
     if repetitions is None:

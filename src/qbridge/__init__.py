@@ -22,7 +22,7 @@ from qbridge.replay import (
 from qbridge.tiers import Tier
 from qbridge.verdict import Verdict
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 __all__ = [
     "capture",
     "replay",

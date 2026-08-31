@@ -19,7 +19,25 @@ rapport.verdict                                  # BIT_EXACT
 
 Le manifeste est un JSON autonome : circuit sérialisé, seed, mode d'exécution,
 options réparties par niveau d'influence, noyau SIMD, empreinte d'environnement,
-et un hash sémantique.
+contexte classique scellé, et **deux** hashes.
+
+### Pourquoi deux hashes
+
+| Hash | Répond à | Couvre |
+|---|---|---|
+| `semantic_hash` | « le rejeu donnera-t-il le même résultat quantique ? » | circuit, seed, mode, options SEMANTIC et NUMERIC, noyau SIMD |
+| `content_hash` | « ce document est-il intact ? » | **tous** les champs, y compris ceux que le premier ignore à dessein |
+
+Un hash unique forcerait à choisir entre deux propriétés incompatibles :
+détecter toute modification, et ne pas invalider un rejeu pour une raison qui
+n'en est pas une. Changer le code de post-analyse modifie le document mais ne
+peut pas modifier l'exécution quantique — le `content_hash` bouge, le
+`semantic_hash` non, et le rejeu reste `BIT_EXACT`.
+
+`content_hash` est calculé par énumération des champs de la dataclass, jamais
+depuis une liste écrite à la main : un champ ajouté plus tard est scellé
+d'office. Une liste manuelle est précisément ce qui avait laissé `circuit_json`
+hors du sceau.
 
 > **Portée exacte du hash — à ne pas surestimer.** Le hash sémantique est
 > **non signé** : il est public et déterministe, donc quiconque modifie le
@@ -89,9 +107,10 @@ pas.
 
 ```python
 ctx = capture_classical(callables={"reduce": ma_reduction}, input_data=probleme)
+run = capture(circuit, seed=7, repetitions=500, classical=ctx)   # scellé au manifeste
 ...
-rapport = verify_source_unchanged(ctx, {"reduce": ma_reduction})
-rapport.has_drift   # True si le code a change depuis le scellement
+ctx = RunRecord.load("runs/essai").manifest.classical()
+verify_source_unchanged(ctx, {"reduce": ma_reduction}).has_drift
 ```
 
 Chaque champ porte un **marqueur de preuve** — `captured`, `derived`,
@@ -204,7 +223,7 @@ disponible.
 - `HardwareBackend` et l'intégration de snapshots de calibration réels
 - ~~Rejeu archivistique~~ — **fait en v0.2** (`verify_archival`, `replay_record`)
 - Export vers OpenQASM 3 / QIR
-- ~~Capture du pré/post-traitement classique~~ — **fait** (`capture_classical`), pas encore intégrée au `Manifest`
+- ~~Capture du pré/post-traitement classique~~ — **faite et scellée au `Manifest`**
 - Compression du `circuit_json` (180 Ko pour 20 qubits × depth 16)
 - Mode `EXPECTATION` de bout en bout (classé, mais pas encore dans `capture`)
 - ~~Interface en ligne de commande~~ — **faite** (`qbridge capture/verify/replay/info/diff`)
