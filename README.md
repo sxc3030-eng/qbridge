@@ -217,6 +217,46 @@ manifeste ne doit jamais laisser croire qu'il vient d'une vraie machine. Le jour
 où une l'est, **seule `sample()` change** — elle postera un job au lieu d'appeler
 qsim. Contrat, manifeste et verdicts restent identiques.
 
+### Données de calibration réelles
+
+`cirq-google` embarque les calibrations médianes de trois vrais processeurs.
+Aucun compte, aucune autorisation, aucun réseau — ce sont des données ouvertes.
+
+```python
+from qbridge.providers import from_google_calibration
+snap, avertissements = from_google_calibration("willow_pink")   # 105 qubits
+```
+
+| | `rainbow` (2021) | `willow_pink` (2024) |
+|---|---|---|
+| qubits | 23 | 105 |
+| T1 moyen | 14,3 µs | **71,9 µs** |
+| erreur de lecture | 2,98 % | **0,60 %** |
+
+Un GHZ à 5 qubits sous le bruit dérivé de Willow donne **96,2 %** de
+`|00000⟩+|11111⟩` sur 2000 tirages, et les T1 de la chaîne valent
+`[71.9, 71.9, 38.0, 74.6, 67.2]` — le qubit (0,8) a la moitié du T1 de ses
+voisins. C'est de l'inhomogénéité d'appareil réelle, et c'est exactement ce
+qu'une moyenne aurait effacé.
+
+**L'adaptateur ne devine rien en silence.** Google ne publie pas les durées de
+porte dans cette calibration ; elles sont fournies par l'appelant et leur
+provenance est **scellée dans l'instantané** (`unit` porte
+`"ABSENT de la calibration Google"`), pour que personne dans cinq ans ne les
+prenne pour des mesures du fournisseur. Les métriques manquantes sont signalées
+plutôt qu'ignorées — `rainbow` utilise des `sqrt_iswap` et non des CZ, et
+l'adaptateur le dit.
+
+Deux différences réelles avec IBM, documentées : Google publie **un seul
+horodatage** pour tout l'instantané (donc `temporal_spread_seconds()` vaut 0,
+ce qui est correct pour une calibration médiane), et `readout_error` est ici la
+moyenne des deux directions d'erreur, que le modèle de bruit de qbridge ne sait
+pas distinguer.
+
+> **Ceci n'est pas un accès au matériel.** Exécuter sur les vraies machines
+> Google demande un partenariat de recherche approuvé. Une archive produite avec
+> ces données a tourné sur `hardware-sim`, et le manifeste le déclare.
+
 ### L'instantané de calibration
 
 Un instantané n'est **pas** l'état d'un appareil à un instant : c'est un sac de
@@ -341,7 +381,7 @@ disponible.
 
 ## Hors périmètre pour cette version
 
-- ~~`HardwareBackend` et snapshots de calibration~~ — **fait** (`hardware-sim`, `CalibrationSnapshot`). Reste à brancher un vrai fournisseur.
+- ~~`HardwareBackend`, snapshots de calibration, fournisseur réel~~ — **fait** (`hardware-sim`, `CalibrationSnapshot`, `providers.google`)
 - ~~Rejeu archivistique~~ — **fait en v0.2** (`verify_archival`, `replay_record`)
 - Export vers OpenQASM 3 / QIR
 - ~~Capture du pré/post-traitement classique~~ — **faite et scellée au `Manifest`**
