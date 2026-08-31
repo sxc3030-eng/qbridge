@@ -166,34 +166,74 @@ class CalibrationSnapshot:
             return None
         return params[name].value
 
+    @staticmethod
+    def _qubits_de_cle(cle: str) -> frozenset:
+        """Ensemble des qubits designes par une cle `nom:q0,q1`.
+
+        On compare des ENSEMBLES et non des chaines : les fournisseurs ne
+        publient qu'une entree par paire de qubits, sans garantir l'ordre dans
+        lequel un circuit presentera cette paire. C'est une convention de
+        RECHERCHE, pas une affirmation que la porte est symetrique.
+        """
+        _, _, qubits = cle.partition(":")
+        return frozenset(q.strip() for q in qubits.split(",") if q.strip())
+
     def gate_error_for(self, operation: "cirq.Operation") -> float:
-        """Erreur de la porte PRECISE, avec repli documente.
+        """Erreur de la porte PRECISE, avec repli documente et prudent.
 
         Chaine de repli, du plus specifique au plus vague :
 
-        1. cle exacte `nom:qubits` — la donnee que l'instantane a scellee ;
-        2. n'importe quelle porte portant sur exactement ces qubits ;
-        3. moyenne globale.
+        1. cle exacte `nom:qubits` ;
+        2. meme nom de porte sur le MEME ENSEMBLE de qubits, quel que soit
+           l'ordre — `CZ(q1,q0)` doit trouver l'entree `cz:q(0),q(1)` ;
+        3. n'importe quelle porte sur ce meme ensemble de qubits ;
+        4. moyenne des portes de MEME ARITE ;
+        5. moyenne globale.
 
-        Sans cette recherche, `mean_gate_error()` etait appelee pour TOUTES les
-        portes, ce qui ecrasait la finesse par-porte que l'instantane prend
-        justement soin d'enregistrer avec sa date. Mesure : deux instantanes,
-        l'un avec trois portes a 0.01, l'autre avec une porte a 0.03 et deux a
-        0.0, ont des hash differents — les donnees SONT scellees — mais
-        produisaient un bruit identique.
+        Les etapes 2 et 4 corrigent des defauts mesures.
+
+        Sans l'etape 2, `CZ(q1,q0)` tombait jusqu'a la moyenne globale : 0.0177
+        au lieu de 0.050 sur un instantane ou la porte a deux qubits vaut 0.050.
+        Le bruit de la porte a deux qubits — source d'erreur dominante sur du
+        vrai materiel — etait sous-estime d'un facteur 3.
+
+        Sans l'etape 4, une porte a deux qubits absente de l'instantane
+        heritait d'une moyenne que les portes a un qubit tirent vers le bas.
+        Un repli doit degrader vers plus de bruit, jamais vers moins :
+        sous-estimer le bruit produit un rejeu faussement rassurant.
         """
-        qubits = ",".join(str(q) for q in operation.qubits)
+        noms = [str(q) for q in operation.qubits]
+        ensemble = frozenset(noms)
+        arite = len(operation.qubits)
         nom = str(operation.gate).lower().split("(")[0].strip()
 
-        exacte = self.gate_param(f"{nom}:{qubits}", "gate_error")
+        # 1. cle exacte
+        exacte = self.gate_param(f"{nom}:{','.join(noms)}", "gate_error")
         if exacte is not None:
             return exacte
 
-        suffixe = f":{qubits}"
+        # 2. meme porte, meme ensemble de qubits, ordre indifferent
         for cle, params in self.gates.items():
-            if cle.endswith(suffixe) and "gate_error" in params:
+            if "gate_error" not in params:
+                continue
+            if cle.split(":", 1)[0] == nom and self._qubits_de_cle(cle) == ensemble:
                 return params["gate_error"].value
 
+        # 3. n'importe quelle porte sur ce meme ensemble de qubits
+        for cle, params in self.gates.items():
+            if "gate_error" in params and self._qubits_de_cle(cle) == ensemble:
+                return params["gate_error"].value
+
+        # 4. moyenne des portes de meme arite
+        memes = [
+            params["gate_error"].value
+            for cle, params in self.gates.items()
+            if "gate_error" in params and len(self._qubits_de_cle(cle)) == arite
+        ]
+        if memes:
+            return sum(memes) / len(memes)
+
+        # 5. moyenne globale
         return self.mean_gate_error()
 
     def mean_gate_error(self) -> float:

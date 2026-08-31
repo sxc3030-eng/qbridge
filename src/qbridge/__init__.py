@@ -38,7 +38,7 @@ from qbridge.signing import (
 from qbridge.tiers import Tier
 from qbridge.verdict import Verdict
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 __all__ = [
     "capture",
     "replay",

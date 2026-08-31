@@ -330,9 +330,62 @@ def test_l_erreur_de_la_porte_PRECISE_est_utilisee():
     assert b == [0.03, 0.0, 0.0]
 
 
-def test_la_chaine_de_repli_de_gate_error_for(snapshot):
-    """Une porte absente de l'instantane retombe sur la moyenne, pas sur zero :
-    ignorer une porte inconnue sous-estimerait le bruit."""
-    inconnue = snapshot.gate_error_for(cirq.H(cirq.LineQubit(99)))
-    assert inconnue == pytest.approx(snapshot.mean_gate_error())
-    assert inconnue > 0
+def test_le_repli_se_fait_par_ARITE_et_jamais_vers_moins_de_bruit(snapshot):
+    """Une porte absente retombe sur la moyenne des portes de MEME ARITE, pas
+    sur la moyenne globale.
+
+    La moyenne globale melange portes a un et a deux qubits. Une porte a deux
+    qubits absente y heritait d'une valeur que les portes a un qubit tirent
+    vers le bas — or un repli doit degrader vers PLUS de bruit, jamais vers
+    moins : sous-estimer produit un rejeu faussement rassurant.
+    """
+    un_qubit = snapshot.gate_error_for(cirq.H(cirq.LineQubit(99)))
+    deux_qubits = snapshot.gate_error_for(
+        cirq.CZ(cirq.LineQubit(98), cirq.LineQubit(99))
+    )
+    assert un_qubit > 0 and deux_qubits > 0
+    assert deux_qubits > un_qubit, (
+        "une porte a deux qubits inconnue doit heriter du bruit des portes a "
+        "deux qubits, pas d'une moyenne diluee par les portes a un qubit"
+    )
+
+
+def test_l_ordre_des_qubits_ne_fait_pas_perdre_la_calibration():
+    """AVANT correction : `CZ(q1,q0)` ne trouvait pas l'entree `cz:q(0),q(1)`
+    et tombait jusqu'a la moyenne globale — 0.0177 au lieu de 0.050, soit le
+    bruit de la porte a deux qubits sous-estime d'un facteur 3.
+
+    Les fournisseurs ne publient qu'une entree par paire, sans garantir l'ordre
+    dans lequel un circuit presentera cette paire.
+    """
+    d = "2026-08-28T06:00:00+00:00"
+    q = cirq.LineQubit.range(2)
+    snap = CalibrationSnapshot.build(
+        device_id="t",
+        device_version="1",
+        qubits={str(x): {"t1_us": DatedValue(50.0, d, "us")} for x in q},
+        gates={
+            "x:q(0)": {"gate_error": DatedValue(0.001, d, "")},
+            "cz:q(0),q(1)": {"gate_error": DatedValue(0.050, d, "")},
+        },
+        basis_gates=["x", "cz"],
+        coupling_map=[[0, 1]],
+    )
+    assert snap.gate_error_for(cirq.CZ(q[0], q[1])) == pytest.approx(0.050)
+    assert snap.gate_error_for(cirq.CZ(q[1], q[0])) == pytest.approx(0.050)
+
+
+def test_une_porte_parametree_retrouve_la_calibration_de_sa_famille(snapshot):
+    """`str(X**0.5)` ne matche aucune cle exacte ; le repli sur l'ensemble de
+    qubits doit malgre tout retrouver une donnee specifique a ce qubit."""
+    q0 = cirq.LineQubit(0)
+    assert snapshot.gate_error_for(cirq.X(q0) ** 0.5) == pytest.approx(
+        snapshot.gate_error_for(cirq.X(q0))
+    )
+
+
+def test_une_etiquette_ne_change_pas_la_calibration(snapshot):
+    q0 = cirq.LineQubit(0)
+    assert snapshot.gate_error_for(cirq.X(q0).with_tags("perso")) == pytest.approx(
+        snapshot.gate_error_for(cirq.X(q0))
+    )
