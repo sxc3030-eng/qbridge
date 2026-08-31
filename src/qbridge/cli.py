@@ -29,6 +29,7 @@ import argparse
 import json
 import os
 import sys
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -102,14 +103,52 @@ def _error_message(exc: BaseException) -> str:
     return str(exc)
 
 
+def _ecrire(texte: str, flux: Any) -> bool:
+    """Ecrit sans jamais lever. Rend False si l'ecriture a echoue.
+
+    `_fail` et `_emit` etaient appeles DEPUIS les blocs `except` de `main` :
+    si leur `print` echouait, la nouvelle exception sortait de `main`, ou plus
+    aucun handler ne l'attendait. Deux declencheurs mesures :
+
+    - un chemin contenant des caracteres non encodables sur un flux cp1252
+      (le defaut de Windows quand la sortie est redirigee) ;
+    - un tube ferme, c'est-a-dire la forme quotidienne
+      `qbridge info DIR --json | head -1`.
+
+    Pire, le meme mecanisme transformait un SUCCES en code 3 : la verification
+    d'une archive parfaitement intacte sous un chemin unicode renvoyait 3
+    parce que l'affichage du rapport levait et que le rattrapage general
+    concluait a une panne.
+    """
+    try:
+        flux.write(texte + "\n")
+        flux.flush()
+        return True
+    except (OSError, ValueError, UnicodeEncodeError, AttributeError):
+        return False
+
+
+def _adoucir_les_flux() -> None:
+    """Fait degrader les caracteres non encodables en echappements.
+
+    Sans cela, un simple accent dans un chemin suffit a faire echouer
+    l'affichage sur une console Windows par defaut.
+    """
+    for flux in (sys.stdout, sys.stderr):
+        try:
+            flux.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def _emit(payload: Dict[str, Any], as_json: bool, text: List[str]) -> None:
-    """Ecrit la sortie, en JSON canonique ou en texte."""
+    """Ecrit la sortie, en JSON canonique ou en texte. Ne leve jamais."""
     if as_json:
         from qbridge.digest import canonical_json
 
-        print(canonical_json(payload))
+        _ecrire(canonical_json(payload), sys.stdout)
     else:
-        print("\n".join(text))
+        _ecrire("\n".join(text), sys.stdout)
 
 
 def _fail(message: str, as_json: bool, code: int = EXIT_ERROR) -> int:
@@ -121,9 +160,9 @@ def _fail(message: str, as_json: bool, code: int = EXIT_ERROR) -> int:
     if as_json:
         from qbridge.digest import canonical_json
 
-        print(canonical_json({"error": message, "exit_code": code}))
+        _ecrire(canonical_json({"error": message, "exit_code": code}), sys.stdout)
     else:
-        print(f"qbridge : {message}", file=sys.stderr)
+        _ecrire(f"qbridge : {message}", sys.stderr)
     return code
 
 
@@ -188,7 +227,7 @@ def _check_option_names(options: Dict[str, Any]) -> None:
     Une option ignoree en silence est exactement ce qui rend un rejeu
     faussement rassurant : on echoue tot, avec la liste des noms connus.
     """
-    from qbridge.tiers import known_options
+    from qbridge.tiers import check_option_value, known_options
 
     known = known_options()
     unknown = sorted(key for key in options if key not in known)
@@ -197,6 +236,13 @@ def _check_option_names(options: Dict[str, Any]) -> None:
             f"Option(s) inconnue(s) : {', '.join(unknown)}. "
             f"Options classees : {', '.join(sorted(known))}"
         )
+    # Le NOM ne suffit pas : `cpu_threads=off` a un nom valide et une valeur
+    # absurde, scellee telle quelle et passee a qsim comme zero thread.
+    for cle in sorted(options):
+        try:
+            check_option_value(cle, options[cle])
+        except ValueError as exc:
+            raise CliError(str(exc)) from None
 
 
 def _check_backend(name: str) -> None:
@@ -234,7 +280,14 @@ def _load_record(directory: str) -> Any:
         raise CliError(
             f"Champ absent de l'enregistrement {path} : {_error_message(exc)}"
         ) from None
-    except (OSError, ValueError, TypeError) as exc:
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        AttributeError,
+        EOFError,
+        zipfile.BadZipFile,
+    ) as exc:
         raise CliError(f"Enregistrement illisible dans {path} : {exc}") from None
 
 
@@ -484,6 +537,8 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     intact = report.manifest_intact and report.results_intact
 
     chemin_sig = Path(args.directory) / SIGNATURE_FILENAME
+    signature = None  # defini AVANT la bifurcation : ne pas dependre d'un
+    # court-circuit pour qu'un nom existe.
     sig_info: Dict[str, Any] = {"present": chemin_sig.is_file()}
     lignes_sig: List[str] = []
     verifieur = _build_verifier(args)
@@ -498,8 +553,23 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     else:
         try:
             signature = Signature.load(chemin_sig)
-        except (ValueError, OSError) as exc:
-            raise CliError(f"Signature illisible : {exc}") from exc
+        except (ValueError, OSError, TypeError, AttributeError) as exc:
+            # NE PAS lever. Le verdict d'integrite est deja calcule et doit
+            # etre rendu. Un attaquant capable de reecrire samples.npz peut
+            # aussi ecrire `null` dans signature.json ; lever ici retrogradait
+            # une falsification DETECTEE de 1 (« archive falsifiee ») vers 3
+            # (« le harnais n'a pas pu travailler »). Une chaine d'integration
+            # qui retente sur 3 et alerte sur 1 lisait alors le mauvais signal,
+            # et l'attaquant choisissait lequel.
+            sig_info["readable"] = False
+            sig_info["error"] = str(exc)
+            lignes_sig = [
+                _line("signature", "ILLISIBLE"),
+                _line("  detail", str(exc)),
+            ]
+            intact = False
+
+    if sig_info.get("present") and signature is not None:
         sig_info["algorithm"] = signature.algorithm
         sig_info["key_id"] = signature.key_id
         if verifieur is None:
@@ -1172,9 +1242,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     """Point d'entree. Renvoie un code de sortie POSIX, ne leve jamais."""
+    _adoucir_les_flux()
     parser = _build_parser()
     try:
         args = parser.parse_args(argv)
+    except (OSError, ValueError, UnicodeEncodeError) as exc:
+        # argparse ecrit lui-meme ses messages ; si CETTE ecriture echoue
+        # (tube ferme, flux ferme), l'exception n'est pas un SystemExit et
+        # rien ne l'attrapait. Le handler cense garantir que `main` ne leve
+        # jamais laissait donc passer une exception.
+        if isinstance(exc, SystemExit):  # pragma: no cover - defensif
+            raise
+        return EXIT_ERROR
     except SystemExit as exc:
         # argparse ecrit lui-meme son message (--help, argument manquant).
         # On convertit en code de retour pour que `main` reste appelable
@@ -1183,7 +1262,13 @@ def main(argv: list[str] | None = None) -> int:
         # argparse rend 2 pour toute erreur d'usage, or 2 est reserve ici a
         # DIVERGENT : une CI qui se trompe de nom d'option lirait une
         # divergence physique. On remappe vers EXIT_ERROR.
-        code = int(exc.code or 0)
+        try:
+            code = int(exc.code or 0)
+        except (TypeError, ValueError):
+            # SystemExit.code peut porter une chaine. argparse n'en produit
+            # pas, mais cette ligne vit dans le handler qui existe precisement
+            # pour garantir que `main` ne leve jamais.
+            return EXIT_ERROR
         return EXIT_ERROR if code == 2 else code
 
     as_json = bool(getattr(args, "json_output", False))
@@ -1194,7 +1279,12 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return _fail("interrompu", as_json)
     except Exception as exc:  # dernier filet : aucun traceback ne doit sortir
-        return _fail(f"erreur inattendue - {type(exc).__name__} : {exc}", as_json)
+        try:
+            return _fail(f"erreur inattendue - {type(exc).__name__} : {exc}", as_json)
+        except BaseException:  # pragma: no cover - le filet du filet
+            # Formater le message peut encore echouer (un __str__ pathologique).
+            # Le contrat « main ne leve jamais » prime sur le diagnostic.
+            return EXIT_ERROR
 
 
 if __name__ == "__main__":  # pragma: no cover

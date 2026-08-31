@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qbridge"
-version = "0.8.2"
+version = "0.8.3"
 description = "Harnais de capture/replay deterministe pour executions de circuits quantiques"
 requires-python = ">=3.11"
 dependencies = ["cirq>=1.7", "qsimcirq>=0.22", "numpy>=1.26"]
@@ -15,7 +15,7 @@ dependencies = ["cirq>=1.7", "qsimcirq>=0.22", "numpy>=1.26"]
 sign = ["cryptography>=41"]
 
 [project.scripts]
-qbridge = "qbridge.cli:cli_entry_point"
+qbridge = "qbridge.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

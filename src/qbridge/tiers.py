@@ -83,3 +83,55 @@ def split_options(
     for name, value in options.items():
         parts[tier_of(name, mode)][name] = value
     return parts
+
+def option_types() -> Dict[str, type]:
+    """Type attendu de chaque option, lu depuis `QSimOptions` a l'execution.
+
+    Derive de la dataclass plutot qu'ecrit a la main : une option dont le type
+    change chez qsim ne peut pas se desynchroniser d'une table locale.
+    """
+    import dataclasses
+
+    import qsimcirq
+
+    types: Dict[str, type] = {}
+    for champ in dataclasses.fields(qsimcirq.QSimOptions):
+        annotation = champ.type
+        if isinstance(annotation, str):
+            annotation = {"int": int, "bool": bool, "float": float}.get(annotation)
+        if isinstance(annotation, type):
+            types[champ.name] = annotation
+    return types
+
+
+def check_option_value(name: str, value: Any) -> None:
+    """Refuse une valeur du mauvais type pour cette option.
+
+    `--option cpu_threads=off` produisait `False`, scelle tel quel dans le
+    manifeste et passe a qsim comme zero thread. Le nom etait valide, la valeur
+    ne l'etait pas, et rien ne la regardait. Le principe affiche du projet — une
+    option acceptee en silence rend un rejeu faussement rassurant — vaut pour
+    les valeurs autant que pour les noms.
+
+    Note : `bool` est sous-classe de `int` en Python, donc un booleen passerait
+    un test naif `isinstance(value, int)`. On le rejette explicitement.
+    """
+    attendu = option_types().get(name)
+    if attendu is None:
+        return
+    if attendu is bool:
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"L'option {name!r} attend un booleen, recu {value!r} "
+                f"({type(value).__name__})."
+            )
+        return
+    if isinstance(value, bool) or not isinstance(value, attendu):
+        raise ValueError(
+            f"L'option {name!r} attend un {attendu.__name__}, recu {value!r} "
+            f"({type(value).__name__})."
+        )
+    if attendu is int and value < 0:
+        raise ValueError(
+            f"L'option {name!r} attend un entier positif, recu {value!r}."
+        )
