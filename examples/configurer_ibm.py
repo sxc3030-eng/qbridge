@@ -58,6 +58,39 @@ compte. Un `IBMid-...`, un CRN ou une adresse courriel n'en sont pas.
 """
 
 
+def instance_valide(saisie: str):
+    """Rend (valeur, probleme) pour une instance de service.
+
+    `save_account(instance=...)` accepte « the CRN or service name ». C'est
+    OPTIONNEL : sans instance, le service cherche toutes celles du compte.
+    Un CRN n'est pas un secret — il nomme une ressource, il n'authentifie
+    rien. Il ne remplace donc jamais la cle.
+
+    valeur None avec probleme None signifie « aucune instance, et c'est bien ».
+    """
+    valeur = saisie.strip()
+    if not valeur:
+        return None, None
+
+    if valeur.lower().startswith("ibmid-"):
+        return None, (
+            "un IBMid identifie votre PERSONNE, pas une instance de service"
+        )
+    if "@" in valeur:
+        return None, "une adresse courriel n'est pas une instance"
+
+    if valeur.startswith("crn:"):
+        # Un CRN complet compte 10 segments, donc 9 deux-points. En dessous de
+        # 8, la copie est tronquee — cas frequent quand le CRN est coupe par
+        # la largeur d'une fenetre.
+        if valeur.count(":") < 8:
+            return None, "CRN incomplet — la copie a probablement ete tronquee"
+        return valeur, None
+
+    # Tout le reste est traite comme un nom de service, ce que l'API accepte.
+    return valeur, None
+
+
 def canal_valide(saisie: str):
     """Rend le canal retenu, ou None si la saisie n'en est pas un.
 
@@ -112,7 +145,27 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    # La cle n'est reclamee qu'une fois le canal certain valide.
+    print()
+    print("L'INSTANCE est facultative : c'est le CRN de votre service")
+    print("Qiskit Runtime, ou son nom. Sans elle, toutes les instances du")
+    print("compte sont cherchees. Ce n'est PAS un secret et ce n'est pas")
+    print("la cle. Dans le doute, ENTREE.")
+    print()
+
+    instance = None
+    for _ in range(3):
+        saisie = input("Instance / CRN - ENTREE pour aucune : ")
+        instance, probleme = instance_valide(saisie)
+        if probleme is None:
+            break
+        print(f"  refuse : {probleme}.", file=sys.stderr)
+    else:
+        print("Instance invalide, rien n'a ete demande ni ecrit.",
+              file=sys.stderr)
+        return 1
+
+    # La cle n'est reclamee qu'une fois le canal ET l'instance valides :
+    # ce qui est gratuit se verifie avant ce qui est secret.
     jeton = getpass.getpass("Cle API IBM Cloud (invisible) : ").strip()
 
     if not jeton:
@@ -130,11 +183,18 @@ def main() -> int:
         return 1
 
     try:
+        supplement = {"instance": instance} if instance else {}
+        if not instance:
+            # `plans_preference` est IGNORE si une instance est donnee. Sans
+            # instance, il fait prioriser le plan gratuit — meme intention que
+            # `verifier_le_plan` : une depense ne doit pas arriver en silence.
+            supplement["plans_preference"] = ["open"]
         QiskitRuntimeService.save_account(
             channel=canal,
             token=jeton,
             overwrite=True,
             set_as_default=True,
+            **supplement,
         )
     except Exception as exc:
         # On n'affiche jamais le jeton, meme dans un message d'erreur.
