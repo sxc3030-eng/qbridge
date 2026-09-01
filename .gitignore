@@ -6,3 +6,12 @@ runs/
 *.egg-info/
 build/
 dist/
+
+# Rien qui ressemble a un secret ne doit pouvoir etre commite par accident.
+*.key
+*.pem
+*.p12
+*_token*
+*secret*
+.qiskit/
+qiskit-ibm.json

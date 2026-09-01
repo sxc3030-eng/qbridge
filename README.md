@@ -1,6 +1,158 @@
 # qbridge
 
-Harnais de capture/replay pour exécutions de circuits quantiques.
+**Prouver, dans cinq ans, qu'un calcul quantique a bien donné le résultat publié.**
+
+---
+
+## Le problème, en une minute
+
+Vous lancez un calcul sur un ordinateur quantique. Vous publiez un chiffre.
+Trois ans plus tard, quelqu'un demande : *« comment savez-vous que c'est bien
+ce que la machine a répondu ? »*
+
+Vous ne pouvez pas simplement relancer le calcul. Trois raisons, et aucune
+n'est un détail technique :
+
+- **La machine a changé.** Un ordinateur quantique se recalibre en permanence.
+  Celui de 2026 n'est pas celui de 2029, même sous le même nom.
+- **Le résultat n'est pas reproductible.** Le bruit physique n'est pas
+  rejouable. Deux exécutions identiques donnent des tirages différents.
+- **On ne peut pas photographier un état quantique.** Le théorème de
+  non-clonage l'interdit, et la mesure le détruit. Il n'y a rien à sauvegarder.
+
+Autrement dit : **la preuve ne peut pas être « je refais ».**
+
+## Ce que fait qbridge
+
+Il scelle la **recette** et les **résultats bruts** dans un dossier autonome,
+signé, qui reste vérifiable sans machine quantique.
+
+```
+mon_experience/
+  manifest.json    la recette : circuit, graine, état daté de l'appareil, environnement
+  samples.npz      les tirages bruts — la seule donnée qu'on ne peut pas recréer
+  signature.json   qui a scellé tout ça, et quand
+```
+
+Trois garanties, volontairement distinctes parce que les confondre est
+exactement là où ce genre d'outil échoue :
+
+| | Ce que ça prouve | Ce qu'il faut pour le vérifier |
+|---|---|---|
+| **Bit-exact** | même simulateur, mêmes octets | un simulateur |
+| **Statistique** | distributions compatibles | une machine — c'est son plafond |
+| **Archivistique** | les tirages archivés sont bien ceux qui ont été scellés | **rien du tout** |
+
+La troisième est la plus solide, et c'est celle qui compte vraiment. Elle ne
+dépend d'aucun matériel, d'aucun simulateur, ni même de qsim installé.
+Quelqu'un qui ouvre l'archive dans dix ans peut recalculer tous les chiffres
+publiés à partir des tirages bruts — et vérifier qu'ils n'ont pas bougé.
+
+## Un exemple concret
+
+```python
+from qbridge import capture, verify_archival, RunRecord
+from qbridge.providers import from_google_calibration
+
+# l'état réel d'une puce Willow de Google, 105 qubits, daté du 16 août 2024
+etat_machine, avertissements = from_google_calibration("willow_pink")
+
+run = capture(mon_circuit, backend="hardware-sim", seed=7,
+              repetitions=2000, calibration=etat_machine)
+
+RunRecord.from_capture(run).save("runs/mon_experience")
+```
+
+Et trois ans plus tard, sur n'importe quelle machine :
+
+```python
+rapport = verify_archival(RunRecord.load("runs/mon_experience"))
+rapport.results_intact   # True — les tirages sont bien ceux qui ont été scellés
+```
+
+## Ce que ce projet a découvert en chemin
+
+Ce ne sont pas des suppositions : chaque point a été **mesuré**, et les mesures
+sont verrouillées par des tests qui échoueront si le comportement change.
+
+**Le nombre de threads change les résultats.** Sur qsim, le simulateur de
+Google, `cpu_threads=1` et `cpu_threads=2` donnent des bitstrings **différents**
+dès qu'il y a une mesure en cours de circuit — à graine identique. La cause est
+dans leur code C++ : le tirage aléatoire parcourt un tableau dont la longueur
+*est* le nombre de threads. **Ce fait n'est documenté nulle part chez Google.**
+
+**Un « instantané » de calibration n'en est pas un.** Le fichier d'IBM pour la
+machine `ibm_fez`, étiqueté du 26 février 2025, contient 4 060 mesures dont la
+plus ancienne date du **28 décembre 2024**. Soixante jours d'écart sous une
+seule date. Qui le lit comme l'état de la machine à cette date se trompe de
+deux mois sur certains paramètres.
+
+**Les vraies machines sont très inégales.** Sur une chaîne de cinq qubits de
+Willow, les temps de cohérence valent `[71.9, 71.9, 38.0, 74.6, 67.2] µs`. Un
+qubit a la moitié de la durée de vie de ses voisins. Une moyenne effacerait
+exactement ce qui compte.
+
+## Ce que qbridge ne fait pas
+
+Autant le dire tout de suite :
+
+- **Il ne transporte pas d'état quantique.** C'est impossible, pas difficile.
+- **Il ne rend pas les ordinateurs quantiques utiles.** C'est de la plomberie
+  de provenance, pas un algorithme.
+- **Il ne gère aucune clé.** Où vit votre clé privée, qui y accède, comment on
+  révoque : hors périmètre, et c'est écrit tel quel dans le code.
+- **Il n'a jamais tourné sur une vraie machine.** Les données de calibration
+  sont réelles — Google et IBM — mais la soumission d'un job à un QPU physique
+  reste non vérifiée. Le code existe et est testé hors ligne ; il attend un
+  compte.
+
+## Sur la qualité de ce code
+
+Ce projet a été écrit en une journée, et **six vagues de relecture adverse y ont
+trouvé dix-neuf défauts exploitables**. Parmi eux :
+
+- une collision d'empreinte permettant de **substituer une archive entière** ;
+- une signature qui **ne couvrait pas les données** qu'elle prétendait protéger ;
+- un test statistique qui certifiait « compatibles » deux jeux de tirages
+  **sans aucun rapport**.
+
+Tous sont corrigés, et chacun a un test qui **rejoue l'attaque d'origine**.
+
+Le chiffre à retenir n'est pas dix-neuf, c'est ceci : **trois de ces défauts ont
+été introduits par le correctif d'un défaut précédent.** Le code écrit sous
+pression pour réparer autre chose est le plus dangereux du lot.
+
+Conclusion honnête : c'est utilisable pour du travail personnel sur simulateur.
+Ce n'est pas encore une pièce à verser dans un dossier opposable — le taux de
+découverte de défauts n'a pas fléchi en six vagues, ce qui veut dire qu'il en
+reste.
+
+## Démarrer
+
+```bash
+python -m venv .venv
+```
+
+```bash
+.venv/Scripts/python.exe -m pip install -e .
+```
+
+```bash
+.venv/Scripts/python.exe -m pytest -q
+```
+
+```bash
+.venv/Scripts/python.exe examples/demo.py
+```
+
+**Note de langue** : le code, les commentaires et les messages d'erreur sont en
+français. C'est un choix assumé, pas un oubli.
+
+---
+
+# Documentation technique
+
+Ce qui suit s'adresse à quelqu'un qui veut modifier le harnais.
 
 ## Le principe
 
