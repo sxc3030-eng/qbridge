@@ -21,11 +21,17 @@ construit. C'est a vous d'executer, une seule fois et vous-meme :
 Le jeton vit alors dans votre trousseau local. Ni qbridge, ni ce fichier, ni
 aucun manifeste ne le lit, ne le stocke ni ne l'affiche.
 
-CE QUI EST HONNETEMENT INCERTAIN. Le chemin reseau — soumission, file
-d'attente, recuperation — n'a jamais tourne contre un vrai QPU au moment ou ces
-lignes sont ecrites. La conversion, la transpilation et le depaquetage des
-resultats sont valides contre un backend factice, et le depaquetage a ete
-confronte aux comptages de Qiskit lui-meme. Le reste attend un compte.
+CE MODULE A TOURNE CONTRE UN VRAI QPU. Le 2026-09-01, sur `ibm_marrakesh`
+(156 qubits) : GHZ a trois qubits, 1024 tirages, 12 secondes, 97.3 % sur
+`000`+`111`. Le chemin reseau complet — soumission, file d'attente,
+recuperation, depaquetage — est donc exerce, et plus seulement le chemin
+factice. Voir `examples/premier_job_reel.py`.
+
+CE QUI RESTE INCERTAIN. Une seule execution, sur une seule machine, avec un
+circuit minuscule. Rien n'est verifie sur : les circuits profonds, les mesures
+en cours de circuit sur materiel, les files d'attente longues, les erreurs
+reseau en cours de job, ni les autres appareils. Un succes n'est pas une
+couverture.
 """
 
 from __future__ import annotations

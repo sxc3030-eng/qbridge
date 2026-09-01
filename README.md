@@ -101,10 +101,38 @@ Autant le dire tout de suite :
   de provenance, pas un algorithme.
 - **Il ne gère aucune clé.** Où vit votre clé privée, qui y accède, comment on
   révoque : hors périmètre, et c'est écrit tel quel dans le code.
-- **Il n'a jamais tourné sur une vraie machine.** Les données de calibration
-  sont réelles — Google et IBM — mais la soumission d'un job à un QPU physique
-  reste non vérifiée. Le code existe et est testé hors ligne ; il attend un
-  compte.
+- **Il ne corrige aucune erreur quantique.** Il enregistre le bruit, il ne le
+  combat pas.
+
+## Il a tourné sur une vraie machine
+
+Le 1er septembre 2026, sur **`ibm_marrakesh`** — un QPU IBM de 156 qubits.
+C'était le seul chemin du projet qui n'avait jamais été exercé : réseau, file
+d'attente, récupération. Tout le reste était validé hors ligne.
+
+Un état GHZ à trois qubits, 1024 tirages, 12 secondes :
+
+| Résultat | Tirages | Part |
+|---|---|---|
+| `000` | 509 | 49,7 % |
+| `111` | 487 | 47,6 % |
+| les six autres | 28 | 2,7 % |
+
+**97,3 % ± 0,5 %** de fidélité au GHZ. Sur un simulateur parfait ce serait
+100 % : les 2,7 % qui manquent *sont* le bruit physique de la machine, et c'est
+exactement pourquoi un verdict matériel est plafonné à « statistiquement
+compatible » — jamais bit-exact.
+
+L'archive a ensuite été vérifiée **sans aucune ressource quantique** :
+manifeste intact, résultats intacts, 1024 tirages. C'est la garantie
+archivistique qui fonctionne pour de vrai.
+
+Une tentation, et pourquoi j'y ai résisté : `000` sort 509 fois contre 487 pour
+`111`, ce qui ressemble à de la relaxation T1 (un `|1⟩` retombe vers `|0⟩`).
+Vérification faite, l'écart vaut **0,7 σ** — c'est du bruit d'échantillonnage,
+pas un effet. L'excès d'erreurs voisines de `111` plutôt que de `000` (20
+contre 8) est plus intéressant à **2,3 σ**, mais reste sous le seuil : c'est
+suggestif, pas démontré. Il faudrait plus de tirages pour trancher.
 
 ## Sur la qualité de ce code
 
