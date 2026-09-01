@@ -216,3 +216,70 @@ def test_backend_reel_explique_sans_reclamer_de_jeton(monkeypatch):
     message = str(info.value)
     assert "save_account" in message
     assert "ne lit, ne stocke et n'affiche jamais ce jeton" in message
+
+
+# ---------- le garde-fou de facturation ----------
+
+
+class _ServiceFictif:
+    """Imite `QiskitRuntimeService.instances()` sans compte ni reseau."""
+
+    def __init__(self, plans, casse=False):
+        self._plans = plans
+        self._casse = casse
+
+    def instances(self):
+        if self._casse:
+            raise RuntimeError("service injoignable")
+        return [{"crn": f"crn::{p}", "plan": p, "name": p} for p in self._plans]
+
+
+def test_un_plan_gratuit_passe():
+    from qbridge.backends.ibm_runtime import verifier_le_plan
+
+    assert verifier_le_plan(_ServiceFictif(["open"])) == ["open"]
+    assert verifier_le_plan(_ServiceFictif(["lite"])) == ["lite"]
+
+
+def test_un_plan_payant_est_REFUSE():
+    """Le temps QPU se facture a la minute. `backend_reel()` sans argument
+    prend la machine la moins chargee SANS regarder le plan : sur un compte
+    mixte, cela pourrait viser une machine payante."""
+    from qbridge.backends.ibm_runtime import verifier_le_plan
+
+    with pytest.raises(RuntimeError, match="Aucun plan gratuit"):
+        verifier_le_plan(_ServiceFictif(["standard"]))
+    with pytest.raises(RuntimeError, match="Aucun plan gratuit"):
+        verifier_le_plan(_ServiceFictif(["premium", "pay-as-you-go"]))
+
+
+def test_un_compte_mixte_passe_si_un_plan_gratuit_existe():
+    from qbridge.backends.ibm_runtime import verifier_le_plan
+
+    plans = verifier_le_plan(_ServiceFictif(["standard", "open"]))
+    assert "open" in plans
+
+
+def test_un_plan_INCONNU_est_traite_comme_payant():
+    """Liste d'autorisation, pas d'interdiction. Se tromper dans ce sens fait
+    perdre une soumission ; dans l'autre, de l'argent."""
+    from qbridge.backends.ibm_runtime import verifier_le_plan
+
+    with pytest.raises(RuntimeError, match="Aucun plan gratuit"):
+        verifier_le_plan(_ServiceFictif(["plan-invente-en-2027"]))
+
+
+def test_ne_pas_savoir_est_traite_comme_un_risque():
+    """Un echec de `instances()` ne doit pas se lire « c'est gratuit »."""
+    from qbridge.backends.ibm_runtime import verifier_le_plan
+
+    with pytest.raises(RuntimeError, match="Impossible de determiner"):
+        verifier_le_plan(_ServiceFictif([], casse=True))
+
+
+def test_l_accord_explicite_leve_le_garde_fou():
+    """On peut payer — mais en le disant, jamais par defaut."""
+    from qbridge.backends.ibm_runtime import verifier_le_plan
+
+    assert verifier_le_plan(_ServiceFictif(["standard"]), True) == ["standard"]
+    assert verifier_le_plan(_ServiceFictif([], casse=True), True) == []

@@ -193,7 +193,69 @@ class IbmRuntimeBackend:
         return mesures
 
 
-def backend_reel(nom_appareil: Optional[str] = None, **kwargs: Any):
+PLANS_GRATUITS = frozenset({"open", "lite"})
+"""Plans IBM sans facturation a l'usage.
+
+Liste d'AUTORISATION et non d'interdiction : un plan inconnu est traite comme
+payant. Se tromper dans ce sens fait perdre une soumission ; se tromper dans
+l'autre fait perdre de l'argent, et le temps QPU se facture a la minute.
+"""
+
+
+def _plans_du_compte(service: Any) -> list:
+    """Plans des instances accessibles. Liste vide si l'information manque."""
+    try:
+        return [
+            str(instance.get("plan", "")).lower()
+            for instance in service.instances()
+        ]
+    except Exception:
+        # On ne DEDUIT rien d'un echec : une liste vide veut dire « je ne sais
+        # pas », et l'appelant traite l'ignorance comme un risque.
+        return []
+
+
+def verifier_le_plan(service: Any, autoriser_plan_payant: bool = False) -> list:
+    """Refuse de continuer si aucun plan gratuit n'est visible.
+
+    Le temps QPU se facture a la minute chez IBM. `backend_reel()` sans
+    argument prend la machine la moins chargee SANS regarder le plan : sur un
+    compte mixte, cela pourrait viser une machine payante. Ce controle existe
+    pour qu'une depense ne puisse pas arriver en silence — meme discipline que
+    partout ailleurs dans ce projet.
+
+    Rend la liste des plans vus, pour que l'appelant puisse l'afficher.
+    """
+    plans = _plans_du_compte(service)
+    if autoriser_plan_payant:
+        return plans
+
+    if not plans:
+        raise RuntimeError(
+            "Impossible de determiner le plan de votre compte IBM. Le temps "
+            "QPU se facture a la minute : on ne soumet pas sans savoir. "
+            "Verifiez votre instance sur cloud.ibm.com, ou passez "
+            "`autoriser_plan_payant=True` si vous acceptez la facturation en "
+            "connaissance de cause."
+        )
+
+    gratuits = [p for p in plans if p in PLANS_GRATUITS]
+    if not gratuits:
+        raise RuntimeError(
+            f"Aucun plan gratuit sur ce compte (plans vus : {sorted(set(plans))}). "
+            f"Plans consideres comme gratuits : {sorted(PLANS_GRATUITS)}. "
+            "Le temps QPU se facture a la minute. Pour soumettre malgre tout, "
+            "passer explicitement `autoriser_plan_payant=True`."
+        )
+    return plans
+
+
+def backend_reel(
+    nom_appareil: Optional[str] = None,
+    *,
+    autoriser_plan_payant: bool = False,
+    **kwargs: Any,
+):
     """Ouvre un backend IBM REEL. Demande un compte deja configure.
 
     Ne recoit ni ne lit aucun jeton : `QiskitRuntimeService()` lit celui que
@@ -201,7 +263,8 @@ def backend_reel(nom_appareil: Optional[str] = None, **kwargs: Any):
     compte n'est configure, l'erreur le dit clairement plutot que de reclamer
     des identifiants.
 
-    Sans `nom_appareil`, IBM choisit le moins charge.
+    Sans `nom_appareil`, IBM choisit le moins charge — mais SANS regarder le
+    plan, d'ou le controle de `verifier_le_plan` avant toute soumission.
     """
     try:
         from qiskit_ibm_runtime import QiskitRuntimeService
@@ -222,6 +285,8 @@ def backend_reel(nom_appareil: Optional[str] = None, **kwargs: Any):
             "qbridge ne lit, ne stocke et n'affiche jamais ce jeton.\n"
             f"Detail : {exc}"
         ) from exc
+
+    verifier_le_plan(service, autoriser_plan_payant)
 
     appareil = (
         service.backend(nom_appareil)
