@@ -11,13 +11,13 @@ TROIS PRECAUTIONS, ET ELLES COMPTENT.
 
 1. Le jeton est demande par `getpass` : il ne s'affiche pas a l'ecran et
    n'entre pas dans l'historique de votre terminal. Ne le passez PAS en
-   argument de ligne de commande — l'historique du shell le garderait.
+   argument de ligne de commande - l'historique du shell le garderait.
 2. Ne le collez dans aucune conversation, aucun ticket, aucun depot. Un jeton
    qui apparait quelque part est un jeton a revoquer.
 3. Ce fichier ne contient aucun secret et peut etre versionne sans risque.
    Le fichier qu'il ECRIT, lui, ne doit jamais l'etre.
 
-OU OBTENIR LA CLE — ET CE N'EST PLUS UN « JETON QUANTIQUE ».
+OU OBTENIR LA CLE - ET CE N'EST PLUS UN « JETON QUANTIQUE ».
 
 La documentation de `save_account` dans la version installee est explicite :
 
@@ -35,7 +35,7 @@ Le chemin :
                    ->  Create  ->  copier la cle IMMEDIATEMENT
 
 La cle n'est affichee QU'UNE FOIS. Si vous fermez la fenetre sans la copier, il
-faut en creer une autre — ce n'est pas grave, mais autant le savoir.
+faut en creer une autre - ce n'est pas grave, mais autant le savoir.
 
 Il faut aussi qu'une INSTANCE du service Qiskit Runtime existe sur le compte
 (plan Open, gratuit). Elle est generalement creee a l'inscription via la
@@ -49,6 +49,24 @@ import getpass
 import sys
 
 CANAL_PAR_DEFAUT = "ibm_quantum_platform"
+
+CANAUX_VALIDES = ("ibm_quantum_platform", "ibm_cloud")
+"""Les deux seuls noms que `save_account` accepte.
+
+Ce ne sont PAS des identifiants : un canal designe la plateforme, pas le
+compte. Un `IBMid-...`, un CRN ou une adresse courriel n'en sont pas.
+"""
+
+
+def canal_valide(saisie: str):
+    """Rend le canal retenu, ou None si la saisie n'en est pas un.
+
+    Valider AVANT de reclamer la cle : sinon une faute de frappe sur un champ
+    anodin fait saisir un secret pour rien, et le message d'erreur arrive
+    apres coup. Un champ doit refuser ce qu'il peut refuser tot.
+    """
+    canal = saisie.strip() or CANAL_PAR_DEFAUT
+    return canal if canal in CANAUX_VALIDES else None
 
 
 def main() -> int:
@@ -73,7 +91,28 @@ def main() -> int:
     print("La saisie ci-dessous est INVISIBLE. La cle est ecrite dans votre")
     print("trousseau local, nulle part ailleurs.\n")
 
-    canal = input(f"Canal [{CANAL_PAR_DEFAUT}] : ").strip() or CANAL_PAR_DEFAUT
+    print("Le CANAL designe la plateforme, pas votre compte : ce n'est ni un")
+    print("IBMid, ni un CRN, ni une adresse courriel. Dans le doute, ENTREE.")
+    print()
+
+    canal = None
+    for essai in range(3):
+        saisie = input(f"Canal - ENTREE pour [{CANAL_PAR_DEFAUT}] : ")
+        canal = canal_valide(saisie)
+        if canal is not None:
+            break
+        print(
+            f"  {saisie.strip()!r} n'est pas un canal. Attendus : "
+            f"{', '.join(CANAUX_VALIDES)} - ou ENTREE pour le defaut.",
+            file=sys.stderr,
+        )
+    if canal is None:
+        print(file=sys.stderr)
+        print("Canal invalide, rien n'a ete demande ni ecrit.",
+              file=sys.stderr)
+        return 1
+
+    # La cle n'est reclamee qu'une fois le canal certain valide.
     jeton = getpass.getpass("Cle API IBM Cloud (invisible) : ").strip()
 
     if not jeton:
@@ -85,7 +124,7 @@ def main() -> int:
         # tard avec un message obscur.
         print(
             f"La cle saisie fait {len(jeton)} caracteres, ce qui est "
-            "anormalement court. Rien n'a ete ecrit — verifiez la copie.",
+            "anormalement court. Rien n'a ete ecrit - verifiez la copie.",
             file=sys.stderr,
         )
         return 1
