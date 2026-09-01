@@ -96,7 +96,7 @@ def _derive_environnement(manifest: Manifest) -> Dict[str, Any]:
 def replay(
     manifest: Manifest,
     *,
-    backend: Optional[str] = None,
+    backend: Optional[Any] = None,
     override_performance: Optional[Dict[str, Any]] = None,
 ) -> ReplayReport:
     """Rejoue l'execution decrite par `manifest`.
@@ -120,9 +120,16 @@ def replay(
     """
     _verifier_integrite(manifest)
 
-    nom = backend or manifest.backend_name
-    if nom not in BACKENDS:
-        raise KeyError(f"Backend inconnu : {nom!r}. Disponibles : {sorted(BACKENDS)}")
+    # Un backend passe en OBJET court-circuite le registre : c'est la seule
+    # facon de rejouer une archive produite par un backend qui exige des
+    # identifiants, puisqu'on ne peut pas le reconstruire depuis son nom.
+    instance = None if backend is None or isinstance(backend, str) else backend
+    nom = instance.name if instance is not None else (backend or manifest.backend_name)
+    if instance is None and nom not in BACKENDS:
+        raise KeyError(
+            f"Backend inconnu : {nom!r}. Disponibles : {sorted(BACKENDS)}. "
+            "Un backend exigeant des identifiants doit etre passe en objet."
+        )
 
     mode = manifest.execution_mode()
     options = dict(manifest.all_options())
@@ -156,7 +163,11 @@ def replay(
         options = {}
 
     calibration = manifest.calibration()
-    impl = make_backend(nom, calibration if nom in NEEDS_CALIBRATION else None)
+    impl = (
+        instance
+        if instance is not None
+        else make_backend(nom, calibration if nom in NEEDS_CALIBRATION else None)
+    )
     circuit = manifest.circuit()
     # Le backend materiel derive son bruit de la calibration scellee et refuse
     # qu'on lui en passe un autre : le lui transmettre le contredirait.
@@ -288,7 +299,7 @@ def verify_archival(record: "RunRecord") -> ArchivalReport:
 def replay_record(
     record: "RunRecord",
     *,
-    backend: Optional[str] = None,
+    backend: Optional[Any] = None,
     override_performance: Optional[Dict[str, Any]] = None,
 ) -> ReplayReport:
     """Rejoue et compare au RESULTAT ARCHIVE, pas a une re-execution.
@@ -302,9 +313,16 @@ def replay_record(
     record.verify_integrity()
     manifest = record.manifest
 
-    nom = backend or manifest.backend_name
-    if nom not in BACKENDS:
-        raise KeyError(f"Backend inconnu : {nom!r}. Disponibles : {sorted(BACKENDS)}")
+    # Un backend passe en OBJET court-circuite le registre : c'est la seule
+    # facon de rejouer une archive produite par un backend qui exige des
+    # identifiants, puisqu'on ne peut pas le reconstruire depuis son nom.
+    instance = None if backend is None or isinstance(backend, str) else backend
+    nom = instance.name if instance is not None else (backend or manifest.backend_name)
+    if instance is None and nom not in BACKENDS:
+        raise KeyError(
+            f"Backend inconnu : {nom!r}. Disponibles : {sorted(BACKENDS)}. "
+            "Un backend exigeant des identifiants doit etre passe en objet."
+        )
 
     mode = manifest.execution_mode()
     options = dict(manifest.all_options())
@@ -323,7 +341,11 @@ def replay_record(
         options = {}
 
     calibration = manifest.calibration()
-    impl = make_backend(nom, calibration if nom in NEEDS_CALIBRATION else None)
+    impl = (
+        instance
+        if instance is not None
+        else make_backend(nom, calibration if nom in NEEDS_CALIBRATION else None)
+    )
     circuit = manifest.circuit()
     bruit = None if nom in NEEDS_CALIBRATION else manifest.noise()
 

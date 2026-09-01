@@ -13,8 +13,14 @@ Nuance a garder honnete : « n'execute rien » ne veut pas dire « n'importe
 rien ». `qbridge.record` importe `qbridge.capture`, qui importe le registre des
 backends, qui importe qsimcirq. Les commandes archivistiques ne touchent aucun
 simulateur, mais elles chargent encore le module. Les imports du domaine sont
-donc faits DANS les fonctions et jamais au niveau du module : `qbridge --help`
-n'a besoin ni de cirq ni de qsimcirq.
+donc faits DANS les fonctions et jamais au niveau du module.
+
+Cette precaution ne suffit pourtant PAS a rendre `qbridge --help` utilisable
+sans cirq : importer `qbridge.cli` importe d'abord le paquet `qbridge`, dont le
+`__init__` est eager. Une version paresseuse a ete tentee et retiree — elle
+cassait la resolution des noms qui collisionnent avec des sous-modules (voir la
+note dans `__init__.py`). La precaution garde tout de meme sa valeur : elle
+limite ce que chaque commande charge.
 
 Aucune dependance hors bibliotheque standard. Le projet implemente son propre
 chi2 plutot que de dependre de scipy ; ce n'est pas le moment d'y ajouter un

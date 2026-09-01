@@ -45,7 +45,7 @@ def hash_samples(samples: Dict[str, np.ndarray]) -> str:
 def capture(
     circuit: cirq.Circuit,
     *,
-    backend: str = "qsim",
+    backend: Any = "qsim",
     seed: int,
     repetitions: Optional[int] = None,
     options: Optional[Dict[str, Any]] = None,
@@ -69,7 +69,20 @@ def capture(
     s'en servent pas.
     """
     options = dict(options or {})
-    impl = make_backend(backend, calibration)
+    # Un backend qui exige des identifiants ou une connexion ne peut pas etre
+    # construit depuis une simple chaine : on accepte alors l'objet deja
+    # construit. C'est le cas d'IbmRuntimeBackend, volontairement absent du
+    # registre pour cette raison.
+    if isinstance(backend, str):
+        impl = make_backend(backend, calibration)
+    else:
+        impl = backend
+        if calibration is not None:
+            raise ValueError(
+                f"Le backend {getattr(impl, 'name', impl)!r} porte son propre "
+                "etat d'appareil ; lui passer une calibration separee "
+                "laisserait croire qu'elle a influence le resultat."
+            )
 
     manifest = Manifest.build(
         circuit=circuit,
