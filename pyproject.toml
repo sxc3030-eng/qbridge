@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qbridge"
-version = "0.9.0"
+version = "0.9.1"
 description = "Harnais de capture/replay deterministe pour executions de circuits quantiques"
 requires-python = ">=3.11"
 dependencies = ["cirq>=1.7", "qsimcirq>=0.22", "numpy>=1.26"]
@@ -13,6 +13,9 @@ dependencies = ["cirq>=1.7", "qsimcirq>=0.22", "numpy>=1.26"]
 # Signature ed25519 uniquement. Le noyau reste sans dependance : HMAC suffit
 # a l integrite, seul l opposabilite a un tiers demande de l asymetrique.
 sign = ["cryptography>=41"]
+# Adaptateurs de fournisseurs. Chacun est importe paresseusement : le noyau
+# n'en depend pas, et leur absence n'empeche que l'adaptateur concerne.
+ibm = ["qiskit-ibm-runtime>=0.30"]
 
 [project.scripts]
 qbridge = "qbridge.cli:main"

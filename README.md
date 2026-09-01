@@ -257,6 +257,52 @@ pas distinguer.
 > Google demande un partenariat de recherche approuvé. Une archive produite avec
 > ces données a tourné sur `hardware-sim`, et le manifeste le déclare.
 
+### IBM : 69 appareils, et une révélation sur les dates
+
+```python
+from qbridge.providers import from_ibm_backend
+snap, avertissements = from_ibm_backend("FakeFez", qubits=range(6))
+```
+
+Le `fake_provider` de qiskit-ibm-runtime embarque **69 instantanés** de vrais
+appareils. Contrairement à Google, IBM **date chaque paramètre séparément** — ce
+qui a permis de vérifier pour de vrai la fonctionnalité pour laquelle
+`DatedValue` a été conçu, et le résultat justifie le choix :
+
+```
+ibm_fez, last_update_date : 2025-02-26
+4 060 mesures datées
+la plus ancienne : 2024-12-28
+la plus récente  : 2025-02-26
+ÉTALEMENT        : 60 jours
+```
+
+**Un « instantané » étiqueté du 26 février contient des mesures qui s'étalent
+sur deux mois.** Qui le traite comme l'état de l'appareil à cette date se trompe
+de soixante jours sur certains paramètres. `temporal_spread_seconds()` l'expose
+au lieu de le masquer derrière la seule `last_update_date`.
+
+Deux autres choses que les vraies données IBM ont apprises au projet :
+
+**Les unités se trompent en silence.** IBM publie T1 et T2 en *secondes*
+(`4.88e-05` pour 48,8 µs) et `gate_length` en *nanosecondes*. Une erreur de
+facteur produirait un modèle de bruit absurde sans rien signaler ; un test borne
+les valeurs converties.
+
+**Une moyenne de durées n'est représentative de rien.** Sur `ibm_fez` :
+
+| porte | durée |
+|---|---|
+| `x`, `sx`, `rx`, `id` | 24 ns |
+| `cz`, `rzz` | 84 ns |
+| `rz` | **0 ns** (rotation virtuelle) |
+| `reset` | **1584 ns** |
+
+La moyenne vaut 210 ns, écrasée par le `reset`. Elle servait à convertir T1 en
+relaxation, donc une porte X de 24 ns se voyait appliquer **neuf fois trop** de
+bruit. `gate_length_for` prend désormais la durée de la porte précise — même
+chaîne de repli que `gate_error_for`, parce que le raisonnement est le même.
+
 ### L'instantané de calibration
 
 Un instantané n'est **pas** l'état d'un appareil à un instant : c'est un sac de

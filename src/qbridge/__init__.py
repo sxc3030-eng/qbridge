@@ -18,7 +18,7 @@ consulte `__getattr__` comme n'importe quel acces d'attribut.
 
 from typing import Any
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 
 # nom public -> (sous-module, nom dans ce sous-module)
 _EXPORTS = {

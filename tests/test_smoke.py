@@ -1,7 +1,7 @@
 def test_package_importable():
     import qbridge
 
-    assert qbridge.__version__ == "0.9.0"
+    assert qbridge.__version__ == "0.9.1"
 
 
 def test_api_publique_exposee():

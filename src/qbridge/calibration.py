@@ -178,8 +178,10 @@ class CalibrationSnapshot:
         _, _, qubits = cle.partition(":")
         return frozenset(q.strip() for q in qubits.split(",") if q.strip())
 
-    def gate_error_for(self, operation: "cirq.Operation") -> float:
-        """Erreur de la porte PRECISE, avec repli documente et prudent.
+    def _param_for(
+        self, operation: "cirq.Operation", nom_param: str, defaut_global: float
+    ) -> float:
+        """Valeur d'un parametre pour la porte PRECISE, avec repli documente.
 
         Chaine de repli, du plus specifique au plus vague :
 
@@ -188,7 +190,7 @@ class CalibrationSnapshot:
            l'ordre — `CZ(q1,q0)` doit trouver l'entree `cz:q(0),q(1)` ;
         3. n'importe quelle porte sur ce meme ensemble de qubits ;
         4. moyenne des portes de MEME ARITE ;
-        5. moyenne globale.
+        5. valeur globale fournie par l'appelant.
 
         Les etapes 2 et 4 corrigent des defauts mesures.
 
@@ -199,42 +201,71 @@ class CalibrationSnapshot:
 
         Sans l'etape 4, une porte a deux qubits absente de l'instantane
         heritait d'une moyenne que les portes a un qubit tirent vers le bas.
-        Un repli doit degrader vers plus de bruit, jamais vers moins :
-        sous-estimer le bruit produit un rejeu faussement rassurant.
+        Un repli doit degrader vers plus de bruit, jamais vers moins.
+
+        Erreur et duree partagent cette chaine : le meme raisonnement vaut pour
+        les deux, et les separer avait laisse la duree sur une moyenne globale
+        pendant que l'erreur etait deja corrigee.
         """
         noms = [str(q) for q in operation.qubits]
         ensemble = frozenset(noms)
         arite = len(operation.qubits)
         nom = str(operation.gate).lower().split("(")[0].strip()
 
-        # 1. cle exacte
-        exacte = self.gate_param(f"{nom}:{','.join(noms)}", "gate_error")
+        exacte = self.gate_param(f"{nom}:{','.join(noms)}", nom_param)
         if exacte is not None:
             return exacte
 
-        # 2. meme porte, meme ensemble de qubits, ordre indifferent
         for cle, params in self.gates.items():
-            if "gate_error" not in params:
+            if nom_param not in params:
                 continue
             if cle.split(":", 1)[0] == nom and self._qubits_de_cle(cle) == ensemble:
-                return params["gate_error"].value
+                return params[nom_param].value
 
-        # 3. n'importe quelle porte sur ce meme ensemble de qubits
         for cle, params in self.gates.items():
-            if "gate_error" in params and self._qubits_de_cle(cle) == ensemble:
-                return params["gate_error"].value
+            if nom_param in params and self._qubits_de_cle(cle) == ensemble:
+                return params[nom_param].value
 
-        # 4. moyenne des portes de meme arite
         memes = [
-            params["gate_error"].value
+            params[nom_param].value
             for cle, params in self.gates.items()
-            if "gate_error" in params and len(self._qubits_de_cle(cle)) == arite
+            if nom_param in params and len(self._qubits_de_cle(cle)) == arite
         ]
         if memes:
             return sum(memes) / len(memes)
 
-        # 5. moyenne globale
-        return self.mean_gate_error()
+        return defaut_global
+
+    def gate_error_for(self, operation: "cirq.Operation") -> float:
+        """Erreur de la porte PRECISE. Voir `_param_for` pour la chaine de
+        repli."""
+        return self._param_for(operation, "gate_error", self.mean_gate_error())
+
+    def gate_length_for(self, operation: "cirq.Operation") -> float:
+        """Duree de la porte PRECISE, en nanosecondes.
+
+        Mesure sur `ibm_fez` qui a motive cette methode :
+
+            x, sx, rx, id :   24 ns
+            cz, rzz       :   84 ns
+            rz            :    0 ns   (rotation virtuelle : correct)
+            reset         : 1584 ns   (66x une porte normale)
+
+            mean_gate_length_ns() = 210 ns
+
+        Cette moyenne sert a convertir T1 en probabilite de relaxation. Une
+        porte X de 24 ns se voyait donc appliquer la relaxation de 210 ns, soit
+        NEUF FOIS trop, parce qu'un `reset` tres long ecrasait la moyenne. Le
+        sens de l'erreur (trop de bruit) etait le moins dangereux, mais l'ordre
+        de grandeur ne l'etait pas.
+
+        Une duree nulle est une donnee legitime, pas une absence : sur du vrai
+        materiel IBM, `rz` est une rotation virtuelle implementee comme un
+        changement de phase de reference, et ne dure effectivement rien.
+        """
+        return self._param_for(
+            operation, "gate_length_ns", self.mean_gate_length_ns()
+        )
 
     def mean_gate_error(self) -> float:
         """Erreur de porte moyenne. Dernier repli de `gate_error_for`, jamais
@@ -344,12 +375,16 @@ class _CalibrationNoiseModel(cirq.NoiseModel):
         valeur = self._snap.qubit_param(qubit, "readout_error")
         return 0.0 if valeur is None else max(0.0, min(0.5, valeur))
 
-    def _damping(self, qubit: cirq.Qid) -> float:
-        """Probabilite de relaxation pendant une duree de porte typique."""
+    def _damping(self, qubit: cirq.Qid, duree_ns: float) -> float:
+        """Probabilite de relaxation pendant la duree REELLE de la porte.
+
+        La duree vient de `gate_length_for`, pas d'une moyenne globale : sur
+        `ibm_fez`, un `reset` de 1584 ns tirait la moyenne a 210 ns et faisait
+        appliquer neuf fois trop de relaxation a une porte X de 24 ns.
+        """
         import math
 
         t1_us = self._snap.qubit_param(qubit, "t1_us")
-        duree_ns = self._snap.mean_gate_length_ns()
         if not t1_us or t1_us <= 0 or duree_ns <= 0:
             return 0.0
         return max(0.0, min(1.0, 1.0 - math.exp(-(duree_ns / 1000.0) / t1_us)))
@@ -387,19 +422,22 @@ class _CalibrationNoiseModel(cirq.NoiseModel):
         # bien l'une apres l'autre, pas simultanement.
         depolarisation = []
         relaxation = []
-        # L'erreur est prise PAR OPERATION, pas en moyenne : c'est la donnee
-        # que l'instantane a scellee avec sa propre date.
+        # Erreur ET duree sont prises PAR OPERATION, jamais en moyenne : ce sont
+        # les donnees que l'instantane a scellees avec leur propre date.
         erreur_par_qubit = {}
+        duree_par_qubit = {}
         for operation in moment.operations:
             erreur = self._snap.gate_error_for(operation)
+            duree = self._snap.gate_length_for(operation)
             for qubit in operation.qubits:
                 erreur_par_qubit[qubit] = erreur
+                duree_par_qubit[qubit] = duree
 
         for qubit in sorted(moment.qubits):
             p = erreur_par_qubit.get(qubit, 0.0)
             if p > 0:
                 depolarisation.append(cirq.depolarize(min(p, 0.75)).on(qubit))
-            gamma = self._damping(qubit)
+            gamma = self._damping(qubit, duree_par_qubit.get(qubit, 0.0))
             if gamma > 0:
                 relaxation.append(cirq.amplitude_damp(gamma).on(qubit))
 
