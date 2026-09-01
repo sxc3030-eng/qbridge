@@ -50,6 +50,15 @@ import sys
 
 CANAL_PAR_DEFAUT = "ibm_quantum_platform"
 
+LONGUEUR_CLE_ATTENDUE = 44
+"""Longueur annoncee par le tableau de bord IBM lui-meme :
+« use the 44-character API_KEY you created ».
+
+Sert d'AVERTISSEMENT, jamais de refus : un format peut changer, et
+rejeter une cle valide serait pire que d'en laisser passer une douteuse.
+"""
+
+
 CANAUX_VALIDES = ("ibm_quantum_platform", "ibm_cloud")
 """Les deux seuls noms que `save_account` accepte.
 
@@ -172,15 +181,25 @@ def main() -> int:
         print("Aucune cle saisie, rien n'a ete ecrit.", file=sys.stderr)
         return 1
     if len(jeton) < 20:
-        # Garde-fou : un jeton IBM est long. Une saisie trop courte est
-        # probablement une erreur de copie, et l'ecrire ferait echouer plus
-        # tard avec un message obscur.
+        # Une saisie tres courte est une erreur de copie, pas une cle.
+        # L'ecrire ferait echouer plus tard sur un message obscur.
         print(
             f"La cle saisie fait {len(jeton)} caracteres, ce qui est "
             "anormalement court. Rien n'a ete ecrit - verifiez la copie.",
             file=sys.stderr,
         )
         return 1
+    if len(jeton) != LONGUEUR_CLE_ATTENDUE:
+        # AVERTISSEMENT seulement : le format peut changer, et refuser une
+        # cle valide serait pire que la laisser passer. Mais une cle
+        # tronquee a la copie est frequente et vaut d'etre signalee ici
+        # plutot que dix lignes plus bas sous forme d'erreur reseau.
+        print(
+            f"  avertissement : {len(jeton)} caracteres, alors qu'IBM "
+            f"annonce {LONGUEUR_CLE_ATTENDUE}. On continue, mais si la "
+            "suite echoue, suspectez une copie incomplete.",
+            file=sys.stderr,
+        )
 
     try:
         supplement = {"instance": instance} if instance else {}
