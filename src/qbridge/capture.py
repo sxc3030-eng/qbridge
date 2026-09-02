@@ -125,6 +125,10 @@ def capture(
         calibration_json=(
             calibration.to_json() if calibration is not None else None
         ),
+        # DEFAUT 27 : ces avertissements etaient calcules puis jetes. Ils
+        # disent ce qui a ete converti, restreint, ou carrement RATE — dont
+        # « etat d'appareil NON scelle » quand l'extraction echoue.
+        calibration_warnings=avertissements,
         device_provenance_json=provenance,
         kernel=None if getattr(impl, "USES_QSIM_KERNEL", True) else {},
     )

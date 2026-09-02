@@ -737,3 +737,58 @@ def test_une_date_illisible_ne_fait_pas_echouer_le_verdict(archive):
 
     instantane = CalibrationSnapshot.from_json(archive.manifest.calibration_json)
     assert instantane.age_seconds("pas-une-date") is None
+
+
+# ---------- defaut 27 : un avertissement calcule puis JETE ----------
+
+
+def test_les_avertissements_de_calibration_sont_SCELLES(brut):
+    """DEFAUT 27, famille « un signal calcule puis jete ».
+
+    `capture()` recevait les avertissements de `device_calibration()` dans une
+    variable locale JAMAIS relue. Ils disaient ce qui avait ete converti,
+    restreint ou omis — et rien n'en survivait dans l'archive.
+    """
+    avertissements = brut.manifest.calibration_warnings
+    assert avertissements, "le scellement d'un etat d'appareil n'est jamais muet"
+    assert any("restreint aux qubits" in a for a in avertissements)
+    assert any("convertis" in a for a in avertissements)
+
+
+def test_la_RAISON_d_une_calibration_absente_survit(backend, monkeypatch):
+    """LE pire cas du defaut 27. Quand l'extraction echoue, l'archive portait
+    `calibration_json = None` et la cause disparaissait : plus moyen de
+    distinguer « cet appareil ne publie rien » de « la lecture a plante »."""
+    from qbridge.providers import ibm as fournisseur
+
+    def refuse(*a, **k):
+        raise RuntimeError("proprietes illisibles")
+
+    monkeypatch.setattr(fournisseur, "from_ibm_backend", refuse)
+
+    run = capture(_ghz(), backend=backend, seed=7, repetitions=100)
+    assert run.manifest.calibration_json is None
+    assert any(
+        "NON scelle" in a and "proprietes illisibles" in a
+        for a in run.manifest.calibration_warnings
+    )
+
+
+def test_les_avertissements_entrent_dans_le_hash_de_CONTENU(brut):
+    """Ils decrivent le scellement, pas la physique : contenu oui, semantique
+    non. Les reecrire ne doit pas passer inapercu pour autant."""
+    from qbridge.manifest import Manifest
+
+    altere = Manifest.from_dict(
+        {**brut.manifest.to_dict(), "calibration_warnings": ["rien a signaler"]}
+    )
+    assert altere._compute_semantic_hash() == brut.manifest.semantic_hash
+    assert altere._compute_content_hash() != brut.manifest.content_hash
+    with pytest.raises(ValueError, match="contenu"):
+        altere.verify_self()
+
+
+def test_un_simulateur_ne_scelle_aucun_avertissement():
+    """qsim n'a pas d'etat d'appareil : rien a convertir, rien a signaler."""
+    run = capture(_ghz(), backend="qsim", seed=7, repetitions=100)
+    assert run.manifest.calibration_warnings == []

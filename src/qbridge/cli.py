@@ -658,6 +658,10 @@ def _cmd_verify(args: argparse.Namespace) -> int:
                 for k, v in sorted(physique.error_budget.items(), key=lambda x: -x[1])
             )
             lignes_phys.append(_line("  budget d'erreur", part))
+    for avertissement in record.manifest.calibration_warnings:
+        # DEFAUT 27 : ces avertissements etaient jetes a la capture. Les
+        # sceller sans jamais les afficher reviendrait au meme.
+        lignes_phys.append(_line("  scellement", avertissement))
     lignes_phys.append(_line("  raison", physique.reason))
     for avertissement in physique.warnings:
         lignes_phys.append(_line("  avertissement", avertissement))

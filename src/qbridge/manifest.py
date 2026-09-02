@@ -35,7 +35,7 @@ import datetime as _dt
 import json
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import cirq
 
@@ -44,7 +44,7 @@ from qbridge.fingerprint import environment_fingerprint, kernel_fingerprint
 from qbridge.modes import ExecutionMode, detect_mode
 from qbridge.tiers import Tier, split_options
 
-MANIFEST_SCHEMA_VERSION = "3.2"
+MANIFEST_SCHEMA_VERSION = "3.3"
 
 
 @dataclass(frozen=True)
@@ -80,6 +80,17 @@ class Manifest:
     de lecture des qubits 0, 1 et 2 valent 9.5e-3, 4.3e-3 et 5.7e-3 — plus du
     double d'ecart entre le meilleur et le pire. Deux placements differents du
     meme circuit logique ne sont pas la meme experience physique."""
+    calibration_warnings: List[str] = field(default_factory=list)
+    """Ce que le scellement de l'etat d'appareil a converti, restreint ou RATE.
+
+    DEFAUT 27. Ces avertissements etaient calcules puis jetes : `capture()` les
+    recevait dans une variable locale jamais relue. Le pire cas etant
+    « etat d'appareil NON scelle : <exception> » — l'archive portait alors
+    `calibration_json = None` sans que la raison survive nulle part.
+
+    Ils decrivent le SCELLEMENT, pas la physique : ils entrent donc dans le
+    hash de contenu, jamais dans le hash semantique.
+    """
     classical_json: Optional[str] = None
     """`ClassicalContext` serialise : le code qui a bati le circuit et celui qui
     reduira les tirages, plus l'environnement Python epingle. C'est ce qui rend
@@ -100,6 +111,7 @@ class Manifest:
         noise_json: Optional[str],
         classical_json: Optional[str] = None,
         calibration_json: Optional[str] = None,
+        calibration_warnings: Optional[List[str]] = None,
         device_provenance_json: Optional[str] = None,
         kernel: Optional[Dict[str, Any]] = None,
     ) -> "Manifest":
@@ -132,6 +144,7 @@ class Manifest:
             environment=environment_fingerprint(),
             classical_json=classical_json,
             calibration_json=calibration_json,
+            calibration_warnings=list(calibration_warnings or []),
             device_provenance_json=device_provenance_json,
         )
         scelle = cls(**{**brut.__dict__, "semantic_hash": brut._compute_semantic_hash()})
