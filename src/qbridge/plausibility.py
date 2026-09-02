@@ -31,6 +31,13 @@ tort des 10 portes a deux qubits. Au-dela de 3 % d'infidelite predite, le
 verdict rend donc INDETERMINE plutot que de risquer une fausse accusation —
 seule la BORNE reste opposable, et elle l'est a toute profondeur.
 
+SEULE LA BORNE ACCUSE. Un resultat MOINS bon que predit ne rend jamais
+IMPLAUSIBLE : la calibration publiee est une limite optimiste, et tout ce
+qu'elle ne modelise pas ne peut que degrader. Seul un resultat qui DEPASSE ce
+que la machine declaree peut produire est impossible. Cette asymetrie vient de
+la physique, pas d'un seuil ajuste — et elle a coute deux fausses accusations
+avant d'etre comprise.
+
 CE QUE CE VERDICT N'EST PAS. Ce n'est pas une preuve d'authenticite. Un
 faussaire qui connait la calibration peut fabriquer des tirages plausibles :
 rien ici ne l'en empeche, et la signature detachee reste le seul mecanisme
@@ -496,17 +503,30 @@ def verify_physical_plausibility(record, *, measurement_key: Optional[str] = Non
             Plausibility.PLAUSIBLE,
             "le resultat archive est coherent avec l'etat d'appareil scelle",
         )
-    elif sigma < 4:
+    else:
+        # SEULE LA BORNE PEUT ACCUSER. Un resultat MOINS bon que predit n'est
+        # jamais une preuve de faux : la calibration publiee est une limite
+        # OPTIMISTE, et tout ce qu'elle ne modelise pas — erreurs coherentes,
+        # diaphonie, derive depuis la derniere mesure — ne peut que degrader.
+        #
+        # DEFAUT 26, vecu deux fois en une journee. D'abord en profondeur : le
+        # verdict accusait a 40 sigma des archives honnetes. Puis en surface,
+        # DANS le domaine declare fiable : IBM a rafraichi les erreurs de
+        # lecture d'ibm_marrakesh (0.952 % -> 0.378 % sur q(0), soit 2.5x
+        # mieux) SANS re-mesurer T1 et T2, vieux de 43.4 h. La prediction est
+        # montee a 98.15 % ; la machine a rendu 96.19 %. Le verdict a crie
+        # IMPLAUSIBLE a 4.7 sigma sur une archive produite quatre minutes plus
+        # tot par moi-meme.
+        #
+        # Accuser sur « moins bon que promis » etait structurellement faux, pas
+        # mal calibre. Un seuil ne repare pas cela.
         verdict, raison = (
             Plausibility.TENSION,
-            "ecart notable entre le resultat archive et ce que l'etat scelle "
-            "predit : plausible, mais pas confortablement",
-        )
-    else:
-        verdict, raison = (
-            Plausibility.IMPLAUSIBLE,
-            "le resultat archive ne correspond PAS a ce que la machine "
-            "declaree pouvait produire",
+            f"le resultat archive est nettement en dessous des "
+            f"{100 * predite:.2f} % que l'etat scelle laissait esperer "
+            f"({sigma:.1f} sigma). Ce n'est PAS une accusation : la calibration "
+            "publiee est une limite optimiste, et tout ce qu'elle ne modelise "
+            "pas ne peut que degrader",
         )
 
     return PlausibilityReport(

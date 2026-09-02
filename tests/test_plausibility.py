@@ -213,14 +213,46 @@ def test_un_resultat_FABRIQUE_est_declare_implausible(archive):
     assert rapport.sigma > 4
 
 
-def test_un_resultat_trop_BRUYANT_est_refuse_DANS_le_domaine(archive):
-    """Dans le domaine de validite, la detection va dans les deux sens : une
-    archive bien plus bruyante que la machine declaree est incoherente."""
+def test_un_resultat_trop_BRUYANT_n_est_PAS_une_accusation(archive):
+    """DEFAUT 26. Un resultat MOINS bon que predit ne prouve rien.
+
+    La calibration publiee est une limite OPTIMISTE : tout ce qu'elle ne
+    modelise pas — erreurs coherentes, diaphonie, derive depuis la derniere
+    mesure — ne peut que degrader. Une machine peut aussi simplement mal
+    fonctionner. Rien de tout cela n'est un faux.
+
+    Vecu deux fois en une journee. En profondeur, le verdict accusait a
+    40 sigma des archives honnetes. Puis DANS le domaine declare fiable : IBM a
+    rafraichi les erreurs de lecture d'ibm_marrakesh (0.952 % -> 0.378 % sur
+    q(0)) sans re-mesurer T1/T2, vieux de 43.4 h. Prediction montee a 98.15 %,
+    machine a 96.19 %, verdict IMPLAUSIBLE a 4.7 sigma — sur une archive
+    produite quatre minutes plus tot.
+    """
     generateur = np.random.default_rng(0)
     bruit = generateur.integers(0, 2, size=(1024, 3)).astype(np.uint8)
     rapport = verify_physical_plausibility(_truquer(archive, bruit))
     assert rapport.within_domain is True
-    assert rapport.verdict is Plausibility.IMPLAUSIBLE
+    assert rapport.observed_weight < rapport.upper_bound
+    assert rapport.verdict is Plausibility.TENSION
+    assert rapport.verdict is not Plausibility.IMPLAUSIBLE
+    assert "PAS une accusation" in rapport.reason
+
+
+def test_seule_la_borne_peut_rendre_IMPLAUSIBLE(archive):
+    """L'asymetrie vient de la physique : depasser la limite declaree est
+    impossible, rester en dessous ne prouve rien."""
+    n = 1024
+    parfait = np.zeros((n, 3), dtype=np.uint8)
+    parfait[n // 2 :] = 1
+    trop_bon = verify_physical_plausibility(_truquer(archive, parfait))
+    assert trop_bon.verdict is Plausibility.IMPLAUSIBLE
+    assert trop_bon.observed_weight > trop_bon.upper_bound
+
+    generateur = np.random.default_rng(1)
+    trop_mauvais = verify_physical_plausibility(
+        _truquer(archive, generateur.integers(0, 2, size=(n, 3)).astype(np.uint8))
+    )
+    assert trop_mauvais.verdict is not Plausibility.IMPLAUSIBLE
 
 
 def test_le_sigma_reste_fini_quand_le_faux_annonce_100_pourcent(archive):
