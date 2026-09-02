@@ -64,9 +64,10 @@ from qbridge.signing import (
     verify_record_signature,
 )
 from qbridge.tiers import Tier
+from qbridge.timestamp import Timestamp, TimestampReport, stamp
 from qbridge.verdict import Verdict
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 __all__ = [
     "capture",
     "replay",
@@ -76,6 +77,9 @@ __all__ = [
     "Journal",
     "JournalEntry",
     "JournalReport",
+    "Timestamp",
+    "TimestampReport",
+    "stamp",
     "Plausibility",
     "PlausibilityReport",
     "Manifest",

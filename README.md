@@ -176,14 +176,51 @@ Chaine de scellement de runs
 Supprimer, réordonner, insérer ou substituer une exécution casse le chaînage —
 y compris quand le faussaire renumérote proprement les entrées restantes.
 
-**Ce que ça ne fait pas, et il faut le dire.** La chaîne ne prouve pas que la
-série est *complète*. Une exécution jamais inscrite n'y laisse aucune trace :
-on ne peut pas prouver l'absence d'un événement dont rien n'a gardé mémoire.
+**La chaîne seule ne suffit pas.** Un faussaire qui contrôle le journal peut le
+refaire sans les entrées gênantes — le résultat sera valide. Ce qui change,
+c'est le coût : il doit tout réécrire, et **sa tête ne sera plus la même**.
+Encore faut-il que quelqu'un ait vu l'ancienne.
 
-Ce qui change, c'est le coût. Effacer une entrée déjà inscrite oblige à
-réécrire **tout** le journal, et sa tête ne sera plus celle qui a été publiée.
-Si la tête a été signée, datée ou simplement communiquée une seule fois, la
-réécriture devient détectable. Sans témoin extérieur, elle ne l'est pas.
+### Le témoin extérieur
+
+```bash
+qbridge journal runs --stamp
+```
+
+Une autorité RFC 3161 signe « cette empreinte m'a été présentée à l'instant T ».
+Personne ne peut antidater un jeton sans sa clé.
+
+```
+  tete        : 56d2740690fa3d8a52833cb0abc0443b...
+  horodatage  : LIE
+  date attestee : 2026-09-02T20:41:13+00:00
+```
+
+Le faussaire supprime alors deux runs et **refait entièrement le journal**. Sa
+chaîne est valide, ses archives cohérentes — et pourtant :
+
+```
+  horodatage : NON LIE
+  detail     : ce jeton date une AUTRE empreinte que cette tete de journal
+```
+
+Code de sortie **1**. La réécriture est devenue détectable.
+
+**Ce qui sort de la machine** : une empreinte de 32 octets, rien d'autre. Ni
+circuit, ni tirages, ni manifeste — l'autorité ne peut pas savoir ce qu'elle
+date. Et l'horodatage demande le réseau ; la **vérification jamais**. Une
+preuve qui exigerait de joindre un serveur dans dix ans n'en serait pas une :
+les autorités disparaissent, les domaines expirent. Le jeton est autoportant.
+
+**Ce qui reste non vérifié**, et un test le verrouille : la **signature** de
+l'autorité. qbridge vérifie hors ligne le statut, la liaison et la date ; la
+signature demande une racine de confiance, et `commande_openssl()` rend la
+commande exacte. Sans elle, un jeton *fabriqué* passerait — ce qui est attesté
+ici, c'est la cohérence, pas l'authenticité.
+
+**Et la limite de fond, qu'aucun horodatage ne lève** : une exécution jamais
+inscrite ne laisse aucune trace. On ne peut pas prouver l'absence d'un
+événement dont rien n'a gardé mémoire.
 
 ## Attraper un faux que rien d'autre n'attrape
 

@@ -836,12 +836,58 @@ def _cmd_journal(args: argparse.Namespace) -> int:
         journal = Journal.load(chemin)
         inscrit = None
 
+    if args.stamp:
+        from qbridge.timestamp import stamp as horodater
+
+        if journal.head is None:
+            raise CliError("Journal vide : il n'y a aucune tete a horodater.")
+        try:
+            jeton = horodater(journal.head, url=args.tsa)
+        except Exception as exc:
+            raise CliError(
+                f"Horodatage impossible aupres de {args.tsa} : {exc}"
+            ) from exc
+        jeton.save(dossier)
+
     rapport = journal.verify_records(dossier)
     code = EXIT_OK if rapport.intact else EXIT_MISMATCH
+
+    # Le temoin exterieur, s'il existe. Sa lecture ne touche jamais au reseau.
+    from qbridge.timestamp import TIMESTAMP_FILENAME, Timestamp
+
+    chemin_jeton = dossier / TIMESTAMP_FILENAME
+    horodatage = None
+    lignes_tsa: List[str] = []
+    if chemin_jeton.is_file() and journal.head is not None:
+        try:
+            rapport_tsa = Timestamp.load(chemin_jeton).verify(journal.head)
+        except (OSError, ValueError) as exc:
+            lignes_tsa = [_line("horodatage", f"ILLISIBLE : {exc}")]
+            code = EXIT_MISMATCH
+        else:
+            horodatage = rapport_tsa.to_dict()
+            lignes_tsa = [
+                _line("horodatage", "LIE" if rapport_tsa.bound else "NON LIE"),
+                _line("  date attestee", rapport_tsa.stamped_at or "?"),
+                _line("  signature TSA", "NON verifiee ici"),
+                _line("  detail", rapport_tsa.detail),
+            ]
+            if not rapport_tsa.bound:
+                code = EXIT_MISMATCH
+    elif journal.head is not None:
+        lignes_tsa = [
+            _line("horodatage", "aucun"),
+            _line(
+                "  consequence",
+                "sans temoin exterieur, une reecriture du journal reste "
+                "indetectable (--stamp)",
+            ),
+        ]
 
     payload = {
         "directory": str(dossier),
         "appended": inscrit,
+        "timestamp": horodatage,
         "executed_circuit": False,
         **rapport.to_dict(),
         "exit_code": code,
@@ -859,6 +905,7 @@ def _cmd_journal(args: argparse.Namespace) -> int:
         text.append(_line("rompue a", rapport.broken_at))
     for avertissement in rapport.warnings:
         text.append(_line("avertissement", avertissement))
+    text += lignes_tsa
     text.append(
         "  La tete s'engage sur toute la serie : la publier, la dater ou la "
         "signer rend une reecriture ulterieure detectable."
@@ -1345,6 +1392,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "--add",
         metavar="ENREGISTREMENT",
         help="inscrire ce dossier d'enregistrement a la suite de la chaine",
+    )
+    journal_p.add_argument(
+        "--stamp",
+        action="store_true",
+        help=(
+            "faire dater la tete par une autorite RFC 3161. SEULE option qui "
+            "sort de la machine, et elle n'envoie qu'une empreinte de "
+            "32 octets : l'autorite ne peut pas savoir ce qu'elle date. La "
+            "verification, elle, reste hors ligne pour toujours."
+        ),
+    )
+    # Import DANS la fonction : `cli.py` ne doit rien importer du domaine au
+    # niveau du module, et un test le verifie. Il m'a attrape.
+    from qbridge.timestamp import TSA_PAR_DEFAUT
+
+    journal_p.add_argument(
+        "--tsa",
+        default=TSA_PAR_DEFAUT,
+        metavar="URL",
+        help=f"autorite d'horodatage a interroger (defaut : {TSA_PAR_DEFAUT})",
     )
     journal_p.add_argument(
         "--json",
