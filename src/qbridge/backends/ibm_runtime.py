@@ -62,9 +62,15 @@ class IbmRuntimeBackend:
         qiskit_backend: Any,
         *,
         optimization_level: int = 1,
+        initial_layout: Optional[List[int]] = None,
     ) -> None:
         self._backend = qiskit_backend
         self._optimization_level = optimization_level
+        self._initial_layout = list(initial_layout) if initial_layout else None
+        """Qubits PHYSIQUES imposes. Sans cela le transpileur choisit seul, et
+        il ne connait pas forcement les memes criteres que l appelant : sur
+        ibm_marrakesh, les erreurs de lecture vont de 0.23 % a 50.94 % selon le
+        qubit — un facteur 220."""
         nom = getattr(qiskit_backend, "name", None) or "inconnu"
         if callable(nom):  # certaines versions exposent name()
             nom = nom()
@@ -223,6 +229,7 @@ class IbmRuntimeBackend:
             backend=self._backend,
             optimization_level=self._optimization_level,
             seed_transpiler=seed,
+            initial_layout=self._initial_layout,
         )
 
         placement = None
@@ -237,6 +244,7 @@ class IbmRuntimeBackend:
             "device": self.device_name,
             "optimization_level": self._optimization_level,
             "seed_transpiler": seed,
+            "layout_impose": self._initial_layout,
             "initial_layout": placement,
             "gate_counts": {k: int(v) for k, v in physique.count_ops().items()},
             "operations": self._operations_physiques(physique),
