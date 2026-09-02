@@ -18,7 +18,7 @@ meilleure chaine selon la calibration, et une chaine mediocre choisie expres.
 
 CE QUE LA MESURE A DONNE, ET LA CORRECTION QU'ELLE IMPOSE.
 
-Premier resultat, contre  :
+Premier resultat, contre le niveau 1 :
 
     defaut     [0, 1, 2]         94.34 %
     meilleure  [147, 148, 149]   97.27 %   -> +2.93 points, 3.3 sigma
@@ -41,7 +41,7 @@ CE QUE L'EXPERIENCE PROUVE VRAIMENT, et c'est plus utile :
    la passe de placement de Qiskit trouve avec des moyens bien plus lourds.
    C'est une validation du critere, pas une victoire sur l'outil.
 
-2. Le defaut coute 3 points.  est le reglage des
+2. Le defaut coute 3 points. Le niveau 1 est le reglage des
    tutoriels ; il rend le placement TRIVIAL [0, 1, 2], 72e sur 244, et rien
    n'avertit. Trois points de fidelite perdus en silence.
 
@@ -188,7 +188,11 @@ def main() -> int:
     if abs(ecart) / incertitude < 2:
         print("  -> sous 2 sigma : rien de concluant sur cette execution")
     elif ecart > 0:
-        print("  -> choisir les qubits depuis la calibration BAT le transpileur")
+        print("  -> notre critere bat CE REGLAGE-CI du transpileur.")
+        print("     ATTENTION : `optimization_level=1` ne cherche pas vraiment")
+        print("     de placement. Au niveau 3, Qiskit trouve la MEME chaine que")
+        print("     nous, et l'ecart restant tombe a 0.8 sigma. Comparer au")
+        print("     reglage le plus faible d'un outil n'est pas le comparer.")
     else:
         print("  -> le transpileur fait MIEUX que notre critere")
 
