@@ -111,6 +111,31 @@ class IbmRuntimeBackend:
         )
 
     @staticmethod
+    def _operations_physiques(circuit_transpile: Any) -> Dict[str, int]:
+        """Les operations REELLEMENT executees, par qubit physique.
+
+        POURQUOI PAS `count_ops()`. Il dit combien de `cz`, jamais lesquels.
+        Sur `ibm_marrakesh`, les paires cz scellees vont de 1.65e-3 a 3.63e-3 :
+        un facteur 2.2. Predire avec une moyenne quand la transpilation a
+        utilise deux fois la paire bruyante sous-estime l'erreur a deux qubits
+        de 27 %, sans que rien ne le signale.
+
+        Les cles suivent EXACTEMENT le format de `CalibrationSnapshot.gates`
+        (`"cz:q(0),q(1)"`), pour que la prediction soit un lookup direct et non
+        une traduction — une traduction serait un endroit de plus ou se tromper.
+        """
+        operations: Dict[str, int] = {}
+        for instruction in circuit_transpile.data:
+            indices = tuple(
+                circuit_transpile.find_bit(bit).index for bit in instruction.qubits
+            )
+            cle = instruction.operation.name + ":" + ",".join(
+                f"q({i})" for i in indices
+            )
+            operations[cle] = operations.get(cle, 0) + 1
+        return dict(sorted(operations.items()))
+
+    @staticmethod
     def _depaqueter(champ: Any) -> np.ndarray:
         """Bits empaquetes de Qiskit -> tableau (repetitions, n_qubits) uint8.
 
@@ -214,6 +239,7 @@ class IbmRuntimeBackend:
             "seed_transpiler": seed,
             "initial_layout": placement,
             "gate_counts": {k: int(v) for k, v in physique.count_ops().items()},
+            "operations": self._operations_physiques(physique),
             "depth": int(physique.depth()),
         }
 

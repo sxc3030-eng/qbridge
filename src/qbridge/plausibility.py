@@ -142,7 +142,9 @@ def _erreur_de_lecture(snapshot) -> Optional[float]:
 
 
 def fidelite_predite(
-    snapshot, gate_counts: Dict[str, int]
+    snapshot,
+    gate_counts: Dict[str, int],
+    operations: Optional[Dict[str, int]] = None,
 ) -> Tuple[float, Dict[str, float], List[str]]:
     """Probabilite qu'AUCUNE erreur ne survienne, selon l'etat scelle.
 
@@ -151,10 +153,23 @@ def fidelite_predite(
     Modele multiplicatif : chaque operation reussit independamment. C'est une
     approximation — les erreurs correlees existent — mais elle a predit 97.38 %
     la ou la machine a rendu 97.27 %.
+
+    DEUX PRECISIONS POSSIBLES. Avec `operations` — les operations exactes par
+    qubit physique, scellees dans la provenance — chaque erreur est lue sur la
+    porte qui a REELLEMENT servi. Sans, on retombe sur la moyenne par nom de
+    porte, ce qui est une approximation declaree : sur `ibm_marrakesh` les
+    paires cz vont de 1.65e-3 a 3.63e-3, un facteur 2.2.
     """
+    if operations:
+        return _fidelite_exacte(snapshot, operations)
+
     fidelite = 1.0
     budget: Dict[str, float] = {}
-    avertissements: List[str] = []
+    avertissements: List[str] = [
+        "operations exactes absentes de la provenance : erreurs moyennees par "
+        "nom de porte, ce qui est APPROXIMATIF quand les qubits n'ont pas tous "
+        "la meme qualite"
+    ]
 
     for nom, compte in sorted(gate_counts.items()):
         compte = int(compte)
@@ -174,6 +189,59 @@ def fidelite_predite(
             continue
         if erreur > 0:
             budget[nom] = erreur * compte
+        fidelite *= (1.0 - erreur) ** compte
+
+    total = sum(budget.values())
+    if total > 0:
+        budget = {k: v / total for k, v in budget.items()}
+    return fidelite, budget, avertissements
+
+
+def _fidelite_exacte(
+    snapshot, operations: Dict[str, int]
+) -> Tuple[float, Dict[str, float], List[str]]:
+    """Fidelite lue sur les portes qui ont REELLEMENT servi.
+
+    Chaque cle de `operations` est deja au format des cles de calibration
+    (`"cz:q(0),q(1)"`) : le lookup est direct.
+    """
+    fidelite = 1.0
+    budget: Dict[str, float] = {}
+    avertissements: List[str] = []
+
+    for cle, compte in sorted(operations.items()):
+        compte = int(compte)
+        if compte <= 0:
+            continue
+        nom = cle.split(":")[0]
+
+        params = snapshot.gates.get(cle)
+        erreur = params.get("gate_error").value if params and "gate_error" in params else None
+
+        if erreur is None and nom == "measure":
+            # Les instantanes factices ne scellent pas `measure` comme porte :
+            # l'erreur de lecture vit alors dans le parametre de qubit.
+            qubit = cle.split(":", 1)[1] if ":" in cle else None
+            par_qubit = snapshot.qubits.get(qubit or "", {})
+            if "readout_error" in par_qubit:
+                erreur = par_qubit["readout_error"].value
+
+        if erreur is None:
+            erreur = _erreur_moyenne(snapshot, nom)
+            if erreur is None:
+                avertissements.append(
+                    f"operation {cle!r} executee {compte} fois mais ABSENTE de "
+                    "la calibration scellee : son erreur est comptee comme "
+                    "nulle, donc la fidelite predite est SUREVALUEE"
+                )
+                continue
+            avertissements.append(
+                f"{cle!r} absente de la calibration : erreur moyenne des "
+                f"portes {nom!r} utilisee a la place"
+            )
+
+        if erreur > 0:
+            budget[nom] = budget.get(nom, 0.0) + erreur * compte
         fidelite *= (1.0 - erreur) ** compte
 
     total = sum(budget.values())
@@ -284,7 +352,9 @@ def verify_physical_plausibility(record, *, measurement_key: Optional[str] = Non
         )
 
     instantane = CalibrationSnapshot.from_json(manifeste.calibration_json)
-    predite, budget, avert_fid = fidelite_predite(instantane, gate_counts)
+    predite, budget, avert_fid = fidelite_predite(
+        instantane, gate_counts, provenance.get("operations")
+    )
     avertissements.extend(avert_fid)
 
     import cirq

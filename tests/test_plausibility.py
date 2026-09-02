@@ -348,3 +348,128 @@ def test_le_json_de_verify_porte_le_verdict(archive, tmp_path):
     charge = json.loads(texte)
     assert charge["physical_plausibility"]["verdict"] == "PLAUSIBLE"
     assert charge["physical_plausibility"]["shots"] == 1024
+
+
+# ---------- les operations EXACTES, pas des comptes ----------
+
+
+def test_les_operations_exactes_sont_scellees(backend):
+    """`gate_counts` dit COMBIEN de cz, jamais LESQUELS. Sur
+    `ibm_marrakesh`, les paires cz scellees vont de 1.65e-3 a 3.63e-3 : un
+    facteur 2.2 que des comptes agreges ne peuvent pas distinguer."""
+    run = capture(_ghz(), backend=backend, seed=7, repetitions=100)
+    provenance = json.loads(run.manifest.device_provenance_json)
+
+    operations = provenance["operations"]
+    assert operations, "les operations exactes doivent etre scellees"
+    for cle in operations:
+        assert ":q(" in cle, f"{cle!r} doit nommer ses qubits physiques"
+    assert sum(v for k, v in operations.items() if k.startswith("measure")) == 3
+
+
+def test_les_cles_d_operation_suivent_le_format_de_la_calibration(backend):
+    """Un lookup direct, pas une traduction — une traduction serait un endroit
+    de plus ou se tromper."""
+    from qbridge.calibration import CalibrationSnapshot
+
+    run = capture(_ghz(), backend=backend, seed=7, repetitions=100)
+    operations = json.loads(run.manifest.device_provenance_json)["operations"]
+    instantane = CalibrationSnapshot.from_json(run.manifest.calibration_json)
+
+    portes = {k for k in operations if not k.startswith("measure")}
+    connues = set(instantane.gates)
+    assert portes & connues, "aucune cle d'operation ne correspond a la calibration"
+
+
+def test_la_moyenne_ne_distingue_pas_une_transpilation_MALCHANCEUSE(archive):
+    """Deux placements de meme profondeur, l'un sur la paire propre et l'autre
+    sur la bruyante, doivent donner des predictions DIFFERENTES."""
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(archive.manifest.calibration_json)
+    paires = sorted(k for k in instantane.gates if k.startswith("cx:"))
+    erreurs = {k: instantane.gates[k]["gate_error"].value for k in paires}
+    propre = min(erreurs, key=erreurs.get)
+    bruyante = max(erreurs, key=erreurs.get)
+    assert erreurs[bruyante] > erreurs[propre]
+
+    chanceuse, _, _ = fidelite_predite(instantane, {}, {propre: 4})
+    malchanceuse, _, _ = fidelite_predite(instantane, {}, {bruyante: 4})
+    assert malchanceuse < chanceuse
+
+    moyenne, _, _ = fidelite_predite(instantane, {"cx": 4})
+    assert malchanceuse < moyenne < chanceuse, (
+        "la moyenne tombe entre les deux et ne peut trancher ni dans un sens "
+        "ni dans l'autre"
+    )
+
+
+def test_l_approximation_par_moyenne_est_SIGNALEE(archive):
+    """Une archive scellee avant que les operations exactes existent retombe
+    sur la moyenne. C'est acceptable ; le taire ne l'est pas."""
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(archive.manifest.calibration_json)
+    _, _, avertissements = fidelite_predite(instantane, {"cx": 2}, None)
+    assert any("APPROXIMATIF" in a for a in avertissements)
+
+    _, _, sans = fidelite_predite(instantane, {}, {"cx:q(0),q(1)": 2})
+    assert not any("APPROXIMATIF" in a for a in sans)
+
+
+def test_a_grande_profondeur_la_moyenne_produirait_un_FAUX_verdict(archive):
+    """LE test qui justifie ce changement.
+
+    L'ecart entre moyenne et exact croit avec le nombre de portes a deux
+    qubits. Mesure sur la calibration reelle d'`ibm_marrakesh` : 0.9 sigma a
+    2 portes, 1.9 a 10, et 4.1 a 50 — au-dela du seuil IMPLAUSIBLE. A cette
+    profondeur, l'approximation ne perd plus en precision : elle produit un
+    verdict FAUX sur une archive parfaitement honnete.
+    """
+    import math
+
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(archive.manifest.calibration_json)
+    paires = sorted(k for k in instantane.gates if k.startswith("cx:"))
+    bruyante = max(paires, key=lambda k: instantane.gates[k]["gate_error"].value)
+
+    moyenne, _, _ = fidelite_predite(instantane, {"cx": 50})
+    exact, _, _ = fidelite_predite(instantane, {}, {bruyante: 50})
+
+    ecart_type = math.sqrt(moyenne * (1 - moyenne) / 1024)
+    assert abs(moyenne - exact) / ecart_type > 2, (
+        "a 50 portes a deux qubits, le seul choix moyenne/exact deplace deja "
+        "le verdict de plus de deux sigma"
+    )
+
+
+def test_une_operation_inconnue_retombe_sur_la_moyenne_en_le_disant(archive):
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(archive.manifest.calibration_json)
+    _, _, avertissements = fidelite_predite(
+        instantane, {}, {"cx:q(40),q(41)": 2}
+    )
+    assert any("erreur moyenne" in a for a in avertissements)
+
+
+def test_la_lecture_exacte_utilise_le_qubit_CONCERNE(archive):
+    """Les erreurs de lecture varient d'un qubit a l'autre — 3.5 %, 2.2 % et
+    9.6 % sur FakeManila. Mesurer trois fois le pire n'est pas mesurer trois
+    qubits differents."""
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(archive.manifest.calibration_json)
+    lectures = {
+        cle: params["readout_error"].value
+        for cle, params in instantane.qubits.items()
+        if "readout_error" in params
+    }
+    meilleur = min(lectures, key=lectures.get)
+    pire = max(lectures, key=lectures.get)
+    assert lectures[pire] > lectures[meilleur]
+
+    bon, _, _ = fidelite_predite(instantane, {}, {f"measure:{meilleur}": 3})
+    mauvais, _, _ = fidelite_predite(instantane, {}, {f"measure:{pire}": 3})
+    assert mauvais < bon

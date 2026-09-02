@@ -187,6 +187,36 @@ peu de tirages, ou un circuit dont la loi idéale couvre tous les bitstrings —
 là, un résultat totalement dépolarisé tomberait déjà dans le support, et se
 taire est la seule réponse honnête.
 
+### Pourquoi compter les portes ne suffisait pas
+
+Ma première version prédisait la fidélité à partir de `gate_counts` : *deux*
+portes `cz`, *trois* mesures. Le problème est qu'un compte ne dit jamais
+**lesquelles**. Sur `ibm_marrakesh`, les paires `cz` scellées vont de `1,65e-3`
+à `3,63e-3` — un facteur **2,2**. Moyenner revient à supposer que la
+transpilation a eu une chance moyenne.
+
+À trois qubits c'est bénin. Mesuré sur la calibration réelle, avec le pire
+placement possible :
+
+| Portes à 2 qubits | Moyenne | Exact | Biais |
+|---|---|---|---|
+| 2 | 99,47 % | 99,28 % | 0,9 σ |
+| 10 | 97,39 % | 96,43 % | 1,9 σ |
+| **50** | 87,61 % | 83,37 % | **4,1 σ** |
+| 200 | 58,92 % | 48,32 % | 6,9 σ |
+
+**À cinquante portes à deux qubits, le seul choix moyenne/exact franchit le
+seuil `IMPLAUSIBLE`.** L'approximation ne perdait pas en précision : elle
+aurait déclaré fausse une archive parfaitement honnête.
+
+L'archive scelle donc maintenant les opérations exactes, avec leurs qubits
+physiques — `cz:q(0),q(1)` — dans le format même des clés de calibration, pour
+que la prédiction soit une lecture directe et non une traduction. Une
+traduction serait un endroit de plus où se tromper.
+
+Les archives scellées avant ce changement retombent sur la moyenne, et le
+rapport le **dit** au lieu de le taire.
+
 ### Il a attrapé IBM au passage
 
 Le premier cas nominal du test échouait. Enquête faite : `FakeManilaV2`, le
@@ -215,7 +245,7 @@ C'est corrigé. Une archive matérielle scelle désormais :
 | | |
 |---|---|
 | **État daté de l'appareil** | T1, T2, erreurs de lecture et de porte, avec la date de **chaque** mesure |
-| **Placement physique** | quels qubits ont porté le calcul, la profondeur, les portes après transpilation |
+| **Opérations exactes** | quelles portes, sur **quels** qubits physiques — pas des totaux |
 | **Rien sur qsim** | l'empreinte du simulateur disparaît quand aucun simulateur n'a tourné |
 
 Deux choix qui méritent d'être défendus :
