@@ -608,3 +608,100 @@ def test_le_domaine_suit_l_infidelite_predite(brut):
     rapport = verify_physical_plausibility(_hors_domaine(brut, 0.5))
     assert (1 - rapport.predicted_fidelity) > INFIDELITE_DOMAINE_MAX
     assert rapport.within_domain is False
+
+
+# ---------- defaut 25 : la FRAICHEUR de la calibration ----------
+
+
+def test_l_age_de_la_calibration_est_rapporte(archive):
+    """DEFAUT 25. La prediction sort des valeurs de calibration ; rien ne disait
+    de quand elles dataient.
+
+    Mesure sur l'archive reelle d'ibm_marrakesh : la mesure la plus vieille
+    precedait l'execution de 38.5 h. `temporal_spread_seconds()` valait 35.1 h,
+    mais il mesure l'etalement INTERNE — « ces mesures ne sont pas simultanees
+    entre elles » — jamais l'age par rapport au run. Une calibration
+    parfaitement simultanee peut etre vieille d'une semaine.
+    """
+    rapport = verify_physical_plausibility(archive)
+    assert rapport.calibration_age_hours is not None
+    assert "calibration_age_hours" in rapport.to_dict()
+
+
+def test_une_calibration_vieille_est_SIGNALEE(archive):
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(archive.manifest.calibration_json)
+    vieux = dataclasses.replace(
+        archive,
+        manifest=_resceller(
+            dataclasses.replace(
+                archive.manifest, created_at="2030-01-01T00:00:00+00:00"
+            ),
+            instantane.to_json(),
+        ),
+    )
+    rapport = verify_physical_plausibility(vieux)
+    assert any("precede l'execution" in a for a in rapport.warnings)
+    assert rapport.calibration_age_hours > 1000
+
+
+def test_une_calibration_POSTERIEURE_a_l_execution_est_signalee(archive):
+    """Anormal : elle ne peut pas decrire la machine au moment du run. Le signe
+    le dit plutot que d'etre masque par une valeur absolue."""
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(archive.manifest.calibration_json)
+    futur = dataclasses.replace(
+        archive,
+        manifest=_resceller(
+            dataclasses.replace(
+                archive.manifest, created_at="2000-01-01T00:00:00+00:00"
+            ),
+            instantane.to_json(),
+        ),
+    )
+    rapport = verify_physical_plausibility(futur)
+    assert rapport.calibration_age_hours < 0
+    assert any("POSTERIEURE" in a for a in rapport.warnings)
+
+
+def test_aucun_SEUIL_d_age_n_est_applique(archive):
+    """Delibere : la vitesse de derive d'un QPU entre deux calibrations n'a pas
+    ete mesuree ici. Inventer un seuil fabriquerait le chiffre que tout le
+    reste de ce projet refuse de fabriquer. On rapporte, on ne tranche pas."""
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(archive.manifest.calibration_json)
+    vieux = dataclasses.replace(
+        archive,
+        manifest=_resceller(
+            dataclasses.replace(
+                archive.manifest, created_at="2035-01-01T00:00:00+00:00"
+            ),
+            instantane.to_json(),
+        ),
+    )
+    rapport = verify_physical_plausibility(vieux)
+    assert rapport.calibration_age_hours > 70000
+    assert rapport.verdict is not Plausibility.INDETERMINE, (
+        "l'age seul ne doit pas changer le verdict : il n'y a pas de seuil mesure"
+    )
+
+
+def test_age_et_etalement_sont_deux_choses_DIFFERENTES(archive):
+    """Les confondre EST le defaut 25."""
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(archive.manifest.calibration_json)
+    plus_tard = "2030-01-01T00:00:00+00:00"
+    age = instantane.age_seconds(plus_tard)
+    etalement = instantane.temporal_spread_seconds()
+    assert age > etalement, "l'age croit avec le temps, l'etalement est fige"
+
+
+def test_une_date_illisible_ne_fait_pas_echouer_le_verdict(archive):
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(archive.manifest.calibration_json)
+    assert instantane.age_seconds("pas-une-date") is None

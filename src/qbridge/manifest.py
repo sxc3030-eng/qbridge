@@ -15,9 +15,13 @@ DEUX hashes, aux responsabilites deliberement distinctes :
   la post-analyse a change.
 
 - `content_hash` repond a « ce document est-il intact ? ». Il couvre TOUS les
-  champs, y compris ceux que le semantic_hash ignore a dessein : backend_version,
-  created_at, environment, performance_options, contexte classique. Sans lui, ces
-  champs pourraient etre reecrits sans que rien ne le signale.
+  champs, y compris ceux que le semantic_hash ignore a dessein : created_at,
+  environment, performance_options, contexte classique. Sans lui, ces champs
+  pourraient etre reecrits sans que rien ne le signale.
+
+`backend_version` a longtemps figure dans cette liste d'exclusions. C'etait un
+defaut : le CLI `diff` rendait « semantiquement IDENTIQUES », code 0, pour deux
+machines differentes. Il est dans le hash semantique depuis le schema 3.2.
 
 Confondre les deux est l'erreur a ne pas commettre : un hash unique force a
 choisir entre « detecter toute modification » et « ne pas invalider un rejeu
@@ -40,7 +44,7 @@ from qbridge.fingerprint import environment_fingerprint, kernel_fingerprint
 from qbridge.modes import ExecutionMode, detect_mode
 from qbridge.tiers import Tier, split_options
 
-MANIFEST_SCHEMA_VERSION = "3.1"
+MANIFEST_SCHEMA_VERSION = "3.2"
 
 
 @dataclass(frozen=True)
@@ -141,6 +145,23 @@ class Manifest:
                 "device_provenance_json": self.device_provenance_json,
                 "circuit_hash": self.circuit_hash,
                 "backend_name": self.backend_name,
+                # DEFAUT 24. `backend_version` etait exclu, et le CLI `diff`
+                # rendait « semantiquement IDENTIQUES » avec un code 0 pour deux
+                # machines DIFFERENTES. L'exclusion etait documentee, mais sa
+                # justification — « il est MESURE qu'elles ne changent pas le
+                # resultat » — ne vaut que pour les options PERFORMANCE et
+                # l'environnement. Rien de tel n'a jamais ete montre pour la
+                # version du moteur.
+                #
+                # Le champ est devenu porteur de sens le jour ou le backend IBM
+                # est arrive : `backend_name` vaut « ibm-runtime » pour TOUTES
+                # les machines d'IBM, et `backend_version` est le seul champ qui
+                # distingue ibm_marrakesh d'ibm_fez. Le sceau n'a pas suivi.
+                #
+                # Le compromis est assume : une montee de version de qsim
+                # invalide desormais l'egalite semantique. Se tromper dans ce
+                # sens coute un rejeu ; dans l'autre, une conclusion fausse.
+                "backend_version": self.backend_version,
                 "mode": self.mode,
                 "seed": self.seed,
                 "repetitions": self.repetitions,

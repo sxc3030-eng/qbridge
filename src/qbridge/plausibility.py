@@ -112,6 +112,13 @@ class PlausibilityReport:
     erreurs declarees. Les six mesures d'`effondrement_en_profondeur.py`, de 2 a
     258 portes cz, la respectent toutes."""
     within_domain: Optional[bool] = None
+    calibration_age_hours: Optional[float] = None
+    """Age de la mesure de calibration la plus vieille au moment de l'execution.
+
+    AUCUN SEUIL N'EST APPLIQUE, et c'est delibere : la vitesse de derive d'un
+    QPU entre deux calibrations n'a pas ete mesuree ici. Inventer un seuil
+    reviendrait a fabriquer le chiffre que tout le reste de ce projet refuse de
+    fabriquer. La valeur est rapportee pour que le lecteur juge."""
     support_size: Optional[int] = None
     total_bitstrings: Optional[int] = None
     shots: Optional[int] = None
@@ -130,6 +137,7 @@ class PlausibilityReport:
             "sigma": self.sigma,
             "upper_bound": self.upper_bound,
             "within_domain": self.within_domain,
+            "calibration_age_hours": self.calibration_age_hours,
             "support_size": self.support_size,
             "total_bitstrings": self.total_bitstrings,
             "shots": self.shots,
@@ -393,6 +401,32 @@ def verify_physical_plausibility(record, *, measurement_key: Optional[str] = Non
         )
 
     instantane = CalibrationSnapshot.from_json(manifeste.calibration_json)
+
+    # DEFAUT 25. La prediction sort de ces valeurs ; rien ne disait de quand
+    # elles dataient. Sur l'archive reelle d'ibm_marrakesh, la plus vieille
+    # precedait l'execution de 38.5 heures.
+    age_h = None
+    age_s = instantane.age_seconds(manifeste.created_at)
+    if age_s is not None:
+        age_h = age_s / 3600.0
+        if age_h < 0:
+            avertissements.append(
+                f"calibration POSTERIEURE a l'execution de {-age_h:.1f} h : "
+                "elle ne peut pas decrire la machine au moment du run"
+            )
+        elif age_h > 1:
+            avertissements.append(
+                f"la mesure de calibration la plus vieille precede l'execution "
+                f"de {age_h:.1f} h ; aucun seuil n'est applique car la vitesse "
+                "de derive de cet appareil n'a pas ete mesuree"
+            )
+    etalement_h = instantane.temporal_spread_seconds() / 3600.0
+    if etalement_h > 1:
+        avertissements.append(
+            f"les mesures de calibration s'etalent sur {etalement_h:.1f} h : "
+            "ce n'est PAS l'etat de l'appareil a un instant"
+        )
+
     predite, budget, avert_fid = fidelite_predite(
         instantane, gate_counts, provenance.get("operations")
     )
@@ -482,6 +516,7 @@ def verify_physical_plausibility(record, *, measurement_key: Optional[str] = Non
         sigma=sigma,
         upper_bound=borne,
         within_domain=dans_le_domaine,
+        calibration_age_hours=age_h,
         support_size=len(support),
         total_bitstrings=total_bitstrings,
         shots=n_shots,

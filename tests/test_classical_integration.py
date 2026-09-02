@@ -109,15 +109,17 @@ def test_le_rejeu_quantique_reste_bit_exact_malgre_un_changement_de_reduction():
 @pytest.mark.parametrize(
     "champ,valeur",
     [
-        ("backend_version", "0.0.0-mensonge"),
         ("created_at", "1999-01-01T00:00:00+00:00"),
         ("classical_json", None),
     ],
 )
 def test_content_hash_detecte_les_champs_hors_perimetre_semantique(champ, valeur):
     """Ces champs etaient tous NON couverts avant : on pouvait les reecrire sans
-    que rien ne le signale. `backend_version` permettait notamment a un
-    manifeste de mentir sur le qsim qui l'avait produit."""
+    que rien ne le signale.
+
+    `backend_version` figurait dans cette liste. C'ETAIT LE DEFAUT 24 : voir
+    `test_le_moteur_qui_a_produit_le_resultat_est_SEMANTIQUE`.
+    """
     m = _run().manifest
     altere = Manifest.from_dict({**m.to_dict(), champ: valeur})
     assert altere.semantic_hash == m.semantic_hash, (
@@ -193,3 +195,58 @@ def test_une_derive_du_code_de_reduction_est_signalee_depuis_l_archive(tmp_path)
     rapport = verify_source_unchanged(ctx, {"reduce": reduire_v2})
     assert rapport.has_drift is True
     assert "reduce" in rapport.drifted
+
+
+def test_le_moteur_qui_a_produit_le_resultat_est_SEMANTIQUE():
+    """DEFAUT 24, trouve en classant les 23 precedents par cause.
+
+    `backend_version` etait hors du hash semantique. Le test qui validait cette
+    exclusion le disait pourtant lui-meme : « permettait a un manifeste de
+    mentir sur le qsim qui l'avait produit ». `content_hash` attrape bien une
+    REECRITURE, mais il ne rend pas deux executions REELLEMENT differentes
+    semantiquement differentes — et c'est la question a laquelle le hash
+    semantique pretend repondre.
+
+    Le champ est devenu porteur de sens le jour ou le backend IBM est arrive :
+    `backend_name` vaut « ibm-runtime » pour TOUTES les machines d'IBM, et
+    `backend_version` est le seul champ qui distingue ibm_marrakesh d'ibm_fez.
+    Le sceau n'a pas suivi le changement.
+
+    Degat mesure : `qbridge diff` rendait « semantiquement IDENTIQUES » avec un
+    code de sortie 0 pour deux machines differentes.
+    """
+    m = _run().manifest
+
+    # `from_dict` CONSERVE les hashes stockes — c'est `verify_self` qui les
+    # recalcule. On interroge donc le calcul, pas la valeur relue.
+    autre_machine = Manifest.from_dict(
+        {**m.to_dict(), "backend_version": "une-autre-machine"}
+    )
+    assert autre_machine._compute_semantic_hash() != m.semantic_hash, (
+        "deux moteurs differents ne peuvent pas promettre le meme resultat"
+    )
+    # Et une archive dont on a reecrit ce champ ne passe plus la verification.
+    with pytest.raises(ValueError):
+        autre_machine.verify_self()
+
+
+def test_deux_machines_IBM_ne_se_confondent_plus():
+    """`backend_name` ne distingue pas les machines d'un meme fournisseur."""
+    import cirq
+
+    from qbridge.manifest import Manifest as M
+
+    q = cirq.LineQubit.range(2)
+    base = dict(
+        circuit=cirq.Circuit([cirq.H(q[0]), cirq.measure(*q, key="m")]),
+        backend_name="ibm-runtime",
+        seed=7,
+        repetitions=100,
+        options={},
+        noise_json=None,
+    )
+    marrakesh = M.build(backend_version="ibm_marrakesh", **base)
+    fez = M.build(backend_version="ibm_fez", **base)
+
+    assert marrakesh.backend_name == fez.backend_name
+    assert marrakesh.semantic_hash != fez.semantic_hash

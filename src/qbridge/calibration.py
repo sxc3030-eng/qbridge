@@ -139,6 +139,41 @@ class CalibrationSnapshot:
         dates += [v.date for params in self.gates.values() for v in params.values()]
         return sorted(dates)
 
+    def age_seconds(self, reference: str) -> Optional[float]:
+        """Age de la mesure la plus VIEILLE, par rapport a `reference` (ISO).
+
+        DISTINCT de `temporal_spread_seconds()`, et le defaut 25 venait de les
+        confondre. L'etalement dit « ces mesures ne sont pas simultanees entre
+        elles » ; l'age dit « elles precedent l'execution de tant de temps ».
+        Une calibration parfaitement simultanee peut etre vieille d'une semaine.
+
+        Mesure sur l'archive reelle d'ibm_marrakesh : etalement 35.1 h, mais
+        age de la plus vieille mesure 38.5 h AVANT l'execution. Le verdict de
+        plausibilite predisait a partir de ces valeurs sans que rien ne dise
+        depuis combien de temps elles dataient.
+
+        Rend None si les dates sont illisibles. Une valeur negative signifie
+        que la calibration est POSTERIEURE a l'execution — anormal, et le sens
+        du signe le dit plutot que de le masquer par une valeur absolue.
+        """
+        import datetime as _dt
+
+        dates = self.all_dates()
+        if not dates:
+            return None
+        try:
+            instant = _dt.datetime.fromisoformat(reference)
+            mesures = [_dt.datetime.fromisoformat(d) for d in dates]
+        except (ValueError, TypeError):
+            return None
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=_dt.timezone.utc)
+        mesures = [
+            m if m.tzinfo is not None else m.replace(tzinfo=_dt.timezone.utc)
+            for m in mesures
+        ]
+        return (instant - min(mesures)).total_seconds()
+
     def temporal_spread_seconds(self) -> float:
         """Ecart entre la mesure la plus ancienne et la plus recente.
 
