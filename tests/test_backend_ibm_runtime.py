@@ -283,3 +283,122 @@ def test_l_accord_explicite_leve_le_garde_fou():
 
     assert verifier_le_plan(_ServiceFictif(["standard"]), True) == ["standard"]
     assert verifier_le_plan(_ServiceFictif([], casse=True), True) == []
+
+
+# ---------- l'etat de l'appareil est SCELLE ----------
+
+
+def test_la_calibration_de_l_appareil_est_scellee(backend):
+    """Defaut vecu sur le premier vrai job : l'archive scellait
+    `calibration_json = None`. Elle disait « ca a tourne sur ibm_marrakesh » —
+    un nom — et rien sur l'etat de la machine. Une archive qui ne porte pas
+    l'etat de l'appareil ne peut rien prouver sur le resultat."""
+    from qbridge.calibration import CalibrationSnapshot
+
+    run = capture(_ghz(), backend=backend, seed=7, repetitions=100)
+    assert run.manifest.calibration_json is not None
+
+    instantane = CalibrationSnapshot.from_json(run.manifest.calibration_json)
+    instantane.verify_self()
+    assert instantane.device_id.startswith("ibm:")
+    for cle in ("q(0)", "q(1)", "q(2)"):
+        assert "t1_us" in instantane.qubits[cle]
+        assert "t2_us" in instantane.qubits[cle]
+        assert "readout_error" in instantane.qubits[cle]
+
+
+def test_la_calibration_est_restreinte_aux_qubits_reellement_utilises(backend):
+    """`ibm_marrakesh` publie 156 qubits et 2 420 portes. Tout sceller ferait
+    des centaines de kilo-octets pour un circuit qui en touche trois."""
+    from qbridge.calibration import CalibrationSnapshot
+
+    run = capture(_ghz(), backend=backend, seed=7, repetitions=50)
+    instantane = CalibrationSnapshot.from_json(run.manifest.calibration_json)
+    assert len(instantane.qubits) == 3, "seuls les qubits utilises sont scelles"
+
+
+def test_le_placement_physique_est_scelle(backend):
+    """Sans lui, on ignore QUELS qubits ont porte le calcul, donc quelles
+    erreurs s'appliquent."""
+    import json
+
+    run = capture(_ghz(), backend=backend, seed=7, repetitions=50)
+    assert run.manifest.device_provenance_json is not None
+    trace = json.loads(run.manifest.device_provenance_json)
+    assert trace["initial_layout"] is not None
+    assert trace["gate_counts"]["measure"] == 3
+    assert trace["depth"] > 0
+
+
+def test_le_placement_entre_dans_le_hash_SEMANTIQUE(backend):
+    """LA decision de conception a valider. Deux placements differents du meme
+    circuit logique ne sont pas la meme experience physique : sur
+    `ibm_marrakesh`, les erreurs de lecture des qubits 0, 1 et 2 valent
+    9.5e-3, 4.3e-3 et 5.7e-3 — plus du double d'ecart. Un hash semantique qui
+    les confondrait dirait que deux experiences differentes sont la meme."""
+    from qbridge.manifest import Manifest
+
+    base = capture(_ghz(), backend=backend, seed=7, repetitions=50).manifest
+
+    autre = Manifest.build(
+        circuit=cirq.Circuit(
+            [cirq.H(cirq.LineQubit(0)), cirq.measure(cirq.LineQubit(0), key="m")]
+        ),
+        backend_name=base.backend_name,
+        backend_version=base.backend_version,
+        seed=base.seed,
+        repetitions=base.repetitions,
+        options={},
+        noise_json=None,
+        device_provenance_json='{"initial_layout": [9, 9, 9]}',
+    )
+    encore = Manifest.build(
+        circuit=cirq.Circuit(
+            [cirq.H(cirq.LineQubit(0)), cirq.measure(cirq.LineQubit(0), key="m")]
+        ),
+        backend_name=base.backend_name,
+        backend_version=base.backend_version,
+        seed=base.seed,
+        repetitions=base.repetitions,
+        options={},
+        noise_json=None,
+        device_provenance_json='{"initial_layout": [0, 1, 2]}',
+    )
+    assert autre.semantic_hash != encore.semantic_hash
+
+
+def test_le_noyau_qsim_n_est_PAS_scelle_pour_du_materiel(backend):
+    """Le manifeste enregistrait `qsim_gpu_mode` et `qsim_instruction_set`
+    pour une execution qui n'a jamais touche qsim. C'est de la provenance
+    mensongere : elle decrit un simulateur qui n'a pas tourne."""
+    run = capture(_ghz(), backend=backend, seed=7, repetitions=50)
+    assert run.manifest.kernel == {}
+    assert IbmRuntimeBackend.USES_QSIM_KERNEL is False
+
+
+def test_une_calibration_illisible_ne_fait_PAS_echouer_le_run(backend, monkeypatch):
+    """Perdre l'etat d'appareil est regrettable ; perdre une execution reussie
+    sur du vrai materiel — qui a coute du temps QPU et ne se rejoue pas — le
+    serait bien plus. Le manifeste doit le DIRE, pas le taire."""
+    from qbridge.providers import ibm as fournisseur
+
+    def refuse(*a, **k):
+        raise RuntimeError("proprietes indisponibles")
+
+    monkeypatch.setattr(fournisseur, "from_ibm_backend", refuse)
+
+    run = capture(_ghz(), backend=backend, seed=7, repetitions=50)
+    assert run.manifest.calibration_json is None
+    assert run.samples["m"].shape == (50, 3)
+
+
+def test_le_manifeste_reste_verifiable_avec_l_etat_scelle(backend, tmp_path):
+    run = capture(_ghz(), backend=backend, seed=7, repetitions=100)
+    record = RunRecord.from_capture(run)
+    record.save(tmp_path / "scelle")
+
+    relu = RunRecord.load(tmp_path / "scelle")
+    relu.verify_integrity()
+    relu.manifest.verify_self()
+    assert relu.manifest.calibration_json == run.manifest.calibration_json
+    assert relu.manifest.content_hash == run.manifest.content_hash

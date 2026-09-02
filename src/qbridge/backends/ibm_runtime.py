@@ -50,6 +50,9 @@ class IbmRuntimeBackend:
     """
 
     name = "ibm-runtime"
+    USES_QSIM_KERNEL = False
+    """Aucune ligne de qsim ne s'execute ici. Sceller son empreinte
+    decrirait un simulateur qui n'a pas tourne."""
     BIT_EXACT_REPLAYABLE = False
     """Une vraie machine ne rejoue pas ses tirages. Ici ce n'est meme plus un
     contrat prudent : c'est la physique."""
@@ -117,6 +120,44 @@ class IbmRuntimeBackend:
         """
         deplie = np.unpackbits(champ.array, axis=1, bitorder="big")
         return deplie[:, -champ.num_bits :].astype(np.uint8)
+
+    # ---------- etat de l'appareil ----------
+
+    def device_provenance(self):
+        """Ce que l'appareil a reellement execute. None avant toute execution."""
+        return self.derniere_transpilation
+
+    def device_calibration(self):
+        """Instantane DATE de l'appareil, restreint aux qubits reellement usites.
+
+        Rend `(instantane, avertissements)`, ou None si l'appareil ne publie
+        rien d'exploitable — un simulateur factice sans proprietes, par exemple.
+
+        POURQUOI RESTREINT. `ibm_marrakesh` publie 156 qubits et 2 420 portes.
+        Tout sceller produirait des centaines de kilo-octets pour un circuit
+        qui touche trois qubits. Le placement issu de la transpilation dit
+        exactement lesquels comptent, donc il pilote la restriction.
+
+        POURQUOI APRES L'EXECUTION. Le placement n'existe qu'une fois la
+        transpilation faite. Demander la calibration avant reviendrait a tout
+        sceller, ou a sceller les mauvais qubits.
+        """
+        from qbridge.providers.ibm import from_ibm_backend
+
+        trace = self.derniere_transpilation
+        qubits = None
+        if trace is not None and trace.get("initial_layout"):
+            qubits = [int(i) for i in trace["initial_layout"]]
+
+        try:
+            return from_ibm_backend(self._backend, qubits=qubits)
+        except Exception as exc:
+            # Ne JAMAIS faire echouer une execution reussie parce que la
+            # calibration est illisible. On perd l'etat d'appareil, et le
+            # manifeste doit le dire plutot que de le taire.
+            return None, [
+                f"etat d'appareil NON scelle : {type(exc).__name__} : {exc}"
+            ]
 
     # ---------- execution ----------
 

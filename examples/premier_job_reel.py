@@ -78,6 +78,27 @@ def main() -> int:
     print(f"\n  000 + 111 = {100 * fidelite:.1f}%")
     print("  (100 % sur un simulateur parfait ; l'ecart EST le bruit reel)")
 
+    from qbridge.calibration import CalibrationSnapshot
+    import json
+
+    print()
+    print('=== ETAT DE L APPAREIL SCELLE DANS L ARCHIVE ===')
+    if run.manifest.calibration_json is None:
+        print('  AUCUN — l archive ne pourra rien prouver sur le resultat.')
+    else:
+        cal = CalibrationSnapshot.from_json(run.manifest.calibration_json)
+        print(f'  appareil : {cal.device_id} v{cal.device_version}')
+        print(f'  etalement des mesures : {cal.temporal_spread_seconds()/3600:.1f} h')
+        for cle in sorted(cal.qubits):
+            d = cal.qubits[cle]
+            print(f'    {cle}: T1={d["t1_us"].value:7.1f} us  '
+                  f'T2={d["t2_us"].value:7.1f} us  '
+                  f'lecture={d["readout_error"].value:.3e}')
+        print(f'  portes scellees : {len(cal.gates)}')
+    print(f'  noyau qsim scelle : {run.manifest.kernel} (vide = qsim absent)')
+    prov = json.loads(run.manifest.device_provenance_json or 'null')
+    print(f'  placement scelle  : {prov and prov["initial_layout"]}')
+
     record = RunRecord.from_capture(run)
     record.save(DOSSIER)
     print(f"\narchive scellee dans {DOSSIER}/")

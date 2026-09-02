@@ -40,7 +40,7 @@ from qbridge.fingerprint import environment_fingerprint, kernel_fingerprint
 from qbridge.modes import ExecutionMode, detect_mode
 from qbridge.tiers import Tier, split_options
 
-MANIFEST_SCHEMA_VERSION = "3.0"
+MANIFEST_SCHEMA_VERSION = "3.1"
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,16 @@ class Manifest:
     """`CalibrationSnapshot` serialise : l'etat DATE de l'appareil au moment de
     l'execution. Contrairement au contexte classique, il entre dans le hash
     semantique — l'etat de l'appareil determine bel et bien le resultat."""
+    device_provenance_json: Optional[str] = None
+    """Ce que l'appareil a REELLEMENT execute : placement des qubits logiques
+    vers les qubits physiques, portes apres transpilation, profondeur.
+
+    Entre dans le hash SEMANTIQUE, et ce n'est pas un exces de zele. Sur du
+    materiel, le placement decide QUELS qubits physiques portent le calcul,
+    donc quelles erreurs s'appliquent. Mesure sur `ibm_marrakesh` : les erreurs
+    de lecture des qubits 0, 1 et 2 valent 9.5e-3, 4.3e-3 et 5.7e-3 — plus du
+    double d'ecart entre le meilleur et le pire. Deux placements differents du
+    meme circuit logique ne sont pas la meme experience physique."""
     classical_json: Optional[str] = None
     """`ClassicalContext` serialise : le code qui a bati le circuit et celui qui
     reduira les tirages, plus l'environnement Python epingle. C'est ce qui rend
@@ -86,6 +96,8 @@ class Manifest:
         noise_json: Optional[str],
         classical_json: Optional[str] = None,
         calibration_json: Optional[str] = None,
+        device_provenance_json: Optional[str] = None,
+        kernel: Optional[Dict[str, Any]] = None,
     ) -> "Manifest":
         if seed is None:
             raise ValueError(
@@ -109,10 +121,14 @@ class Manifest:
             semantic_options=parts[Tier.SEMANTIC],
             numeric_options=parts[Tier.NUMERIC],
             performance_options=parts[Tier.PERFORMANCE],
-            kernel=kernel_fingerprint(),
+            # Le noyau qsim ne decrit RIEN pour une execution materielle.
+            # L'appelant le dit ; sans precision on garde l'empreinte qsim,
+            # qui reste juste pour tous les backends simules.
+            kernel=kernel_fingerprint() if kernel is None else dict(kernel),
             environment=environment_fingerprint(),
             classical_json=classical_json,
             calibration_json=calibration_json,
+            device_provenance_json=device_provenance_json,
         )
         scelle = cls(**{**brut.__dict__, "semantic_hash": brut._compute_semantic_hash()})
         return cls(**{**scelle.__dict__, "content_hash": scelle._compute_content_hash()})
@@ -122,6 +138,7 @@ class Manifest:
         return sha256_of(
             {
                 "schema_version": self.schema_version,
+                "device_provenance_json": self.device_provenance_json,
                 "circuit_hash": self.circuit_hash,
                 "backend_name": self.backend_name,
                 "mode": self.mode,

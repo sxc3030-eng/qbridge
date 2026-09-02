@@ -134,6 +134,56 @@ pas un effet. L'excès d'erreurs voisines de `111` plutôt que de `000` (20
 contre 8) est plus intéressant à **2,3 σ**, mais reste sous le seuil : c'est
 suggestif, pas démontré. Il faudrait plus de tirages pour trancher.
 
+## Ce que ce premier vrai job a révélé du code
+
+Il a fallu un vrai QPU pour voir un trou que six vagues de relecture avaient
+manqué : **l'archive ne scellait aucun état physique de la machine.**
+`calibration_json` valait `None`. Elle disait « ça a tourné sur
+`ibm_marrakesh` » — un nom — et rien d'autre. Ni T1/T2, ni erreurs de porte,
+ni erreurs de lecture, ni **quels qubits physiques** avaient porté le calcul.
+
+L'ironie est complète : ce projet avait construit `CalibrationSnapshot` avec
+dates par paramètre, découvert l'étalement de 60 jours chez IBM — et le chemin
+matériel n'en scellait rien. Le manifeste enregistrait même `qsim_gpu_mode`
+pour une exécution qui n'a jamais touché qsim.
+
+C'est corrigé. Une archive matérielle scelle désormais :
+
+| | |
+|---|---|
+| **État daté de l'appareil** | T1, T2, erreurs de lecture et de porte, avec la date de **chaque** mesure |
+| **Placement physique** | quels qubits ont porté le calcul, la profondeur, les portes après transpilation |
+| **Rien sur qsim** | l'empreinte du simulateur disparaît quand aucun simulateur n'a tourné |
+
+Deux choix qui méritent d'être défendus :
+
+**L'état est scellé après l'exécution, pas avant.** Le placement n'existe
+qu'une fois la transpilation faite, et c'est lui qui dit quels qubits sceller.
+`ibm_marrakesh` publie 156 qubits et 2 420 portes ; scellés en entier, ce
+serait des centaines de kilo-octets pour un circuit qui en touche trois.
+
+**Le placement entre dans le hash sémantique.** Sur cette machine, les erreurs
+de lecture des qubits 0, 1 et 2 valent `9.5e-3`, `4.3e-3` et `5.7e-3` — plus du
+double d'écart entre le meilleur et le pire. Deux placements différents du même
+circuit logique ne sont pas la même expérience physique, et un hash qui les
+confondrait mentirait.
+
+Et une règle qui prime sur tout le reste : **une calibration illisible ne fait
+jamais échouer une exécution réussie.** Perdre l'état d'appareil est fâcheux ;
+perdre un job matériel qui a coûté du temps QPU et ne se rejoue pas le serait
+bien plus. Le manifeste le dit alors, au lieu de le taire.
+
+Ce que la machine a révélé d'elle-même au passage :
+
+- La calibration « instantanée » de `ibm_marrakesh` s'étale sur **35 heures**.
+  Même phénomène que les 60 jours d'`ibm_fez`, cette fois sur une machine
+  vivante.
+- Le qubit 0 affiche **T1 = 254 µs mais T2 = 39,5 µs**. Sa cohérence de phase
+  s'effondre six fois plus vite que son énergie.
+- **73,8 % du budget d'erreur** de ce circuit est de l'erreur de **lecture**,
+  contre 20 % pour les portes à deux qubits. Ce n'est pas là qu'on regarde
+  d'habitude.
+
 ## Sur la qualité de ce code
 
 Ce projet a été écrit en une journée, et **six vagues de relecture adverse y ont

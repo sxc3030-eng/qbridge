@@ -84,6 +84,33 @@ def capture(
                 "laisserait croire qu'elle a influence le resultat."
             )
 
+    # L'EXECUTION D'ABORD, LE MANIFESTE ENSUITE. Le placement des qubits
+    # logiques vers les qubits physiques n'existe qu'une fois la transpilation
+    # faite ; l'etat d'appareil a sceller en depend. Construire le manifeste
+    # avant reviendrait a sceller un appareil dont on ignore quelle partie a
+    # servi.
+    vecteur = None
+    samples = None
+    if repetitions is None:
+        vecteur = impl.simulate(circuit, seed=seed, options=options, noise=noise)
+    else:
+        samples = impl.sample(
+            circuit, repetitions=repetitions, seed=seed, options=options, noise=noise
+        )
+
+    avertissements: list = []
+    if calibration is None:
+        obtenir = getattr(impl, "device_calibration", None)
+        if callable(obtenir):
+            calibration, avertissements = obtenir()
+
+    provenance = None
+    decrire = getattr(impl, "device_provenance", None)
+    if callable(decrire):
+        trace = decrire()
+        if trace is not None:
+            provenance = canonical_json(trace)
+
     manifest = Manifest.build(
         circuit=circuit,
         backend_name=impl.name,
@@ -98,13 +125,10 @@ def capture(
         calibration_json=(
             calibration.to_json() if calibration is not None else None
         ),
+        device_provenance_json=provenance,
+        kernel=None if getattr(impl, "USES_QSIM_KERNEL", True) else {},
     )
 
     if repetitions is None:
-        sv = impl.simulate(circuit, seed=seed, options=options, noise=noise)
-        return CaptureRun(manifest, sv, None, sha256_of_array(sv))
-
-    samples = impl.sample(
-        circuit, repetitions=repetitions, seed=seed, options=options, noise=noise
-    )
+        return CaptureRun(manifest, vecteur, None, sha256_of_array(vecteur))
     return CaptureRun(manifest, None, samples, hash_samples(samples))

@@ -55,11 +55,18 @@ def _iso(valeur: Any) -> str:
 
 
 def from_ibm_backend(
-    backend_name: str = "FakeFez",
+    backend_name: Any = "FakeFez",
     *,
     qubits: Optional[Iterable[int]] = None,
 ) -> Tuple[CalibrationSnapshot, List[str]]:
-    """Construit un instantane qbridge depuis un backend factice IBM.
+    """Construit un instantane qbridge depuis un backend IBM, factice ou REEL.
+
+    `backend_name` accepte un nom d'instantane embarque (`"FakeFez"`) ou un
+    objet backend deja construit — y compris une VRAIE machine obtenue du
+    service. Verifie sur `ibm_marrakesh` : un backend en direct expose le meme
+    type `BackendProperties`, avec les memes dates par parametre, que les
+    instantanes figes. C'est pourquoi il n'existe qu'un seul extracteur : deux
+    finiraient par diverger.
 
     Rend `(instantane, avertissements)`. Les avertissements listent ce qui a
     ete converti, suppose ou omis — jamais rien en silence.
@@ -73,20 +80,26 @@ def from_ibm_backend(
     Les indices IBM sont transposes en `cirq.LineQubit`, donc le qubit IBM 3
     devient la cle `q(3)`.
     """
-    from qiskit_ibm_runtime import fake_provider
+    if isinstance(backend_name, str):
+        from qiskit_ibm_runtime import fake_provider
 
-    classe = getattr(fake_provider, backend_name, None)
-    if classe is None:
-        raise ValueError(
-            f"Backend IBM inconnu : {backend_name!r}. "
-            f"Exemples : {', '.join(backends_disponibles()[:6])}..."
-        )
+        classe = getattr(fake_provider, backend_name, None)
+        if classe is None:
+            raise ValueError(
+                f"Backend IBM inconnu : {backend_name!r}. "
+                f"Exemples : {', '.join(backends_disponibles()[:6])}..."
+            )
+        backend = classe()
+        etiquette = backend_name
+    else:
+        # Un backend deja construit : machine reelle ou factice, meme API.
+        backend = backend_name
+        etiquette = str(getattr(backend, "name", backend) or "inconnu")
 
-    backend = classe()
     props = backend.properties()
     if props is None:
         raise ValueError(
-            f"{backend_name} ne publie pas de proprietes calibrees : il n'y a "
+            f"{etiquette} ne publie pas de proprietes calibrees : il n'y a "
             "rien a sceller."
         )
 
@@ -160,9 +173,19 @@ def from_ibm_backend(
         )
 
     # ---- topologie, ramenee aux indices retenus
-    config = backend.configuration()
+    try:
+        config = backend.configuration()
+    except Exception:
+        # Un backend reel n'expose pas toujours `configuration()`. Perdre la
+        # topologie est regrettable ; perdre T1, T2 et les erreurs de porte a
+        # cause d'elle le serait bien plus.
+        config = None
+        avertissements.append(
+            "topologie et portes de base indisponibles sur ce backend : "
+            "l'instantane scelle les mesures, pas la carte de couplage"
+        )
     coupling = []
-    if getattr(config, "coupling_map", None):
+    if config is not None and getattr(config, "coupling_map", None):
         for a, b in config.coupling_map:
             if retenus is None or {a, b} <= retenus:
                 coupling.append([a, b])
@@ -172,7 +195,9 @@ def from_ibm_backend(
         device_version=str(props.backend_version),
         qubits=donnees_qubits,
         gates=donnees_portes,
-        basis_gates=list(getattr(config, "basis_gates", []) or []),
+        basis_gates=list(getattr(config, "basis_gates", []) or [])
+        if config is not None
+        else [],
         coupling_map=coupling,
     )
 
