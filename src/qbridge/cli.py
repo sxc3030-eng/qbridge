@@ -806,6 +806,67 @@ def _classical_summary(manifest: Any) -> Any:
     }
 
 
+def _cmd_journal(args: argparse.Namespace) -> int:
+    """Inscrit ou verifie une chaine de scellement. N'execute aucun circuit.
+
+    Sans `--add`, verifie. Avec, inscrit puis verifie : une inscription qui ne
+    serait pas immediatement verifiee laisserait un journal douteux sur disque.
+    """
+    from qbridge.journal import JOURNAL_FILENAME, Journal
+
+    dossier = Path(args.directory)
+    chemin = dossier / JOURNAL_FILENAME
+
+    if args.add:
+        journal = Journal.load(chemin) if chemin.is_file() else Journal()
+        cible = Path(args.add)
+        record = _load_record(str(cible))
+        try:
+            entree = journal.append(record, label=cible.name)
+        except ValueError as exc:
+            raise CliError(str(exc)) from exc
+        journal.save(chemin)
+        inscrit = {"label": entree.label, "index": entree.index}
+    else:
+        if not chemin.is_file():
+            raise CliError(
+                f"Aucun journal dans {dossier} : rien a verifier. "
+                "Inscrire une premiere execution avec --add."
+            )
+        journal = Journal.load(chemin)
+        inscrit = None
+
+    rapport = journal.verify_records(dossier)
+    code = EXIT_OK if rapport.intact else EXIT_MISMATCH
+
+    payload = {
+        "directory": str(dossier),
+        "appended": inscrit,
+        "executed_circuit": False,
+        **rapport.to_dict(),
+        "exit_code": code,
+    }
+    text = [f"Chaine de scellement de {dossier}"]
+    if inscrit is not None:
+        text.append(_line("inscrit", f"{inscrit['label']} (entree {inscrit['index']})"))
+    text += [
+        _line("entrees", rapport.entries),
+        _line("tete", rapport.head or "(vide)"),
+        _line("chaine", "INTACTE" if rapport.intact else "ROMPUE"),
+        _line("detail", rapport.detail),
+    ]
+    if rapport.broken_at is not None:
+        text.append(_line("rompue a", rapport.broken_at))
+    for avertissement in rapport.warnings:
+        text.append(_line("avertissement", avertissement))
+    text.append(
+        "  La tete s'engage sur toute la serie : la publier, la dater ou la "
+        "signer rend une reecriture ulterieure detectable."
+    )
+    _emit(payload, args.json_output, text)
+    return code
+
+
 def _cmd_info(args: argparse.Namespace) -> int:
     """Resume un enregistrement. N'execute rien."""
     record = _load_record(args.directory)
@@ -1259,6 +1320,39 @@ def _build_parser() -> argparse.ArgumentParser:
         help="surcharge d'option de niveau PERFORMANCE, repetable",
     )
     replay_p.set_defaults(handler=_cmd_replay, json_output=False)
+
+    # ---- journal ----
+    journal_p = subparsers.add_parser(
+        "journal",
+        help="inscrire et verifier une serie d'executions",
+        description=(
+            "Chaine les executions d'une serie par empreintes. Une archive "
+            "seule prouve son propre contenu ; elle ne prouve pas qu'il y en "
+            "avait six. Supprimer, reordonner, inserer ou substituer une "
+            "execution inscrite casse le chainage.\n\n"
+            "Ce que cela ne fait PAS : prouver que la serie est complete. Une "
+            "execution jamais inscrite n'y laisse aucune trace. Ce qui change, "
+            "c'est le cout — effacer une entree oblige a reecrire tout le "
+            "journal, et sa tete ne sera plus celle qui a ete publiee."
+        ),
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    journal_p.add_argument(
+        "directory", help="dossier contenant (ou destine a contenir) journal.json"
+    )
+    journal_p.add_argument(
+        "--add",
+        metavar="ENREGISTREMENT",
+        help="inscrire ce dossier d'enregistrement a la suite de la chaine",
+    )
+    journal_p.add_argument(
+        "--json",
+        dest="json_output",
+        action="store_true",
+        help="sortie JSON canonique sur stdout",
+    )
+    journal_p.set_defaults(handler=_cmd_journal)
 
     # ---- info ----
     info_p = subparsers.add_parser(

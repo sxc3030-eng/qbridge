@@ -37,6 +37,7 @@ from qbridge.classical import (
 from qbridge.manifest import Manifest
 from qbridge.modes import ExecutionMode
 from qbridge.record import RunRecord
+from qbridge.journal import Journal, JournalEntry, JournalReport
 from qbridge.plausibility import (
     Plausibility,
     PlausibilityReport,
@@ -65,13 +66,16 @@ from qbridge.signing import (
 from qbridge.tiers import Tier
 from qbridge.verdict import Verdict
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 __all__ = [
     "capture",
     "replay",
     "replay_record",
     "verify_archival",
     "verify_physical_plausibility",
+    "Journal",
+    "JournalEntry",
+    "JournalReport",
     "Plausibility",
     "PlausibilityReport",
     "Manifest",

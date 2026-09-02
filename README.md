@@ -135,6 +135,56 @@ pas un effet. L'excès d'erreurs voisines de `111` plutôt que de `000` (20
 contre 8) est plus intéressant à **2,3 σ**, mais reste sous le seuil : c'est
 suggestif, pas démontré. Il faudrait plus de tirages pour trancher.
 
+## L'attaque que les empreintes ne voient pas
+
+Six exécutions honnêtes sur `ibm_marrakesh`. Deux contredisent la thèse qu'on
+veut publier. On **supprime les deux dossiers**.
+
+```
+cz=  2  intacte=True
+cz= 10  intacte=True
+cz=130  intacte=True   <- verifie sans broncher
+cz=258  intacte=True   <- verifie sans broncher
+```
+
+Les quatre survivantes vérifient **toutes** : manifeste intact, résultats
+intacts, hashes conformes. Chaque archive est un îlot — rien ne dit qu'il y en
+avait six.
+
+C'est la **publication sélective**, et c'est la forme la plus courante de
+manipulation d'un résultat scientifique. Bien plus répandue que la fabrication
+de données, parce qu'elle ne demande de fabriquer *rien*.
+
+### La chaîne de scellement
+
+```bash
+qbridge journal runs --add runs/profondeur_016
+```
+
+Chaque entrée porte l'empreinte de la précédente. La tête s'engage sur toute
+la série.
+
+```
+Chaine de scellement de runs
+  entrees  : 6
+  tete     : e6f7dc37c33f32370bad03c814a14eea...
+  chaine   : ROMPUE
+  detail   : des archives inscrites manquent a l'appel
+             ABSENTES : ['profondeur_016', 'profondeur_032']
+```
+
+Supprimer, réordonner, insérer ou substituer une exécution casse le chaînage —
+y compris quand le faussaire renumérote proprement les entrées restantes.
+
+**Ce que ça ne fait pas, et il faut le dire.** La chaîne ne prouve pas que la
+série est *complète*. Une exécution jamais inscrite n'y laisse aucune trace :
+on ne peut pas prouver l'absence d'un événement dont rien n'a gardé mémoire.
+
+Ce qui change, c'est le coût. Effacer une entrée déjà inscrite oblige à
+réécrire **tout** le journal, et sa tête ne sera plus celle qui a été publiée.
+Si la tête a été signée, datée ou simplement communiquée une seule fois, la
+réécriture devient détectable. Sans témoin extérieur, elle ne l'est pas.
+
 ## Attraper un faux que rien d'autre n'attrape
 
 Voici une archive fabriquée de toutes pièces : un GHZ **parfait**, 100 % sur
