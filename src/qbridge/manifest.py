@@ -44,7 +44,7 @@ from qbridge.fingerprint import environment_fingerprint, kernel_fingerprint
 from qbridge.modes import ExecutionMode, detect_mode
 from qbridge.tiers import Tier, split_options
 
-MANIFEST_SCHEMA_VERSION = "3.3"
+MANIFEST_SCHEMA_VERSION = "3.4"
 
 
 @dataclass(frozen=True)
@@ -80,6 +80,26 @@ class Manifest:
     de lecture des qubits 0, 1 et 2 valent 9.5e-3, 4.3e-3 et 5.7e-3 — plus du
     double d'ecart entre le meilleur et le pire. Deux placements differents du
     meme circuit logique ne sont pas la meme experience physique."""
+    samples_are_raw: bool = True
+    """Les tirages sont-ils SORTIS de la machine tels quels ?
+
+    DEFAUT 30. L'archive ne le disait pas, et la question decide de tout.
+
+    Mesure sur une archive reelle d'ibm_marrakesh : la correction d'erreur de
+    lecture — methode standard, construite depuis la calibration scellee —
+    fait passer la fidelite de 97.17 % a 100.90 %. Un resultat HONNETE devient
+    alors « physiquement impossible » aux yeux du verdict de plausibilite, dont
+    la borne suppose des tirages bruts.
+
+    Et l'inverse est pire : sans ce champ, un faussaire annoncant 100 % peut
+    repondre « c'est mitige ». L'excuse devient infalsifiable.
+
+    Entre dans le hash SEMANTIQUE : des tirages corriges ne veulent pas dire la
+    meme chose que des tirages bruts.
+
+    La correction elle-meme n'a pas sa place ici : c'est une REDUCTION, et le
+    contexte classique existe deja pour ca.
+    """
     calibration_warnings: List[str] = field(default_factory=list)
     """Ce que le scellement de l'etat d'appareil a converti, restreint ou RATE.
 
@@ -112,6 +132,7 @@ class Manifest:
         classical_json: Optional[str] = None,
         calibration_json: Optional[str] = None,
         calibration_warnings: Optional[List[str]] = None,
+        samples_are_raw: bool = True,
         device_provenance_json: Optional[str] = None,
         kernel: Optional[Dict[str, Any]] = None,
     ) -> "Manifest":
@@ -145,6 +166,7 @@ class Manifest:
             classical_json=classical_json,
             calibration_json=calibration_json,
             calibration_warnings=list(calibration_warnings or []),
+            samples_are_raw=bool(samples_are_raw),
             device_provenance_json=device_provenance_json,
         )
         scelle = cls(**{**brut.__dict__, "semantic_hash": brut._compute_semantic_hash()})
@@ -156,6 +178,7 @@ class Manifest:
             {
                 "schema_version": self.schema_version,
                 "device_provenance_json": self.device_provenance_json,
+                "samples_are_raw": self.samples_are_raw,
                 "circuit_hash": self.circuit_hash,
                 "backend_name": self.backend_name,
                 # DEFAUT 24. `backend_version` etait exclu, et le CLI `diff`

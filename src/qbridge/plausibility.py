@@ -375,6 +375,15 @@ def verify_physical_plausibility(record, *, measurement_key: Optional[str] = Non
             warnings=avertissements,
         )
 
+    if not manifeste.samples_are_raw:
+        return indetermine(
+            "les tirages archives ne sont PAS bruts : ils ont subi un "
+            "post-traitement. La borne physique ne s'applique qu'a ce qui est "
+            "sorti de la machine — une correction d'erreur de lecture fait "
+            "legitimement passer une fidelite au-dessus du maximum atteignable "
+            "(mesure sur ibm_marrakesh : 97.17 % -> 100.90 %)"
+        )
+
     if manifeste.calibration_json is None:
         return indetermine(
             "aucun etat d'appareil scelle : rien ne permet de dire ce que "

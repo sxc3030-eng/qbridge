@@ -129,6 +129,9 @@ def capture(
         # disent ce qui a ete converti, restreint, ou carrement RATE — dont
         # « etat d'appareil NON scelle » quand l'extraction echoue.
         calibration_warnings=avertissements,
+        # `capture()` scelle ce qui SORT de la machine. Un post-traitement se
+        # fait apres, sur l'archive, et doit alors le declarer.
+        samples_are_raw=True,
         device_provenance_json=provenance,
         kernel=None if getattr(impl, "USES_QSIM_KERNEL", True) else {},
     )

@@ -120,6 +120,13 @@ def _calibration_mise_a_l_echelle(instantane, facteur):
     )
 
 
+def _resceller_brut(manifeste, **changements):
+    """Rescelle apres un changement quelconque de champ."""
+    m = dataclasses.replace(manifeste, semantic_hash="", content_hash="", **changements)
+    m = dataclasses.replace(m, semantic_hash=m._compute_semantic_hash())
+    return dataclasses.replace(m, content_hash=m._compute_content_hash())
+
+
 def _resceller(manifeste, calibration_json):
     """Rescelle les empreintes apres modification, comme le ferait `build`."""
     m = dataclasses.replace(
@@ -792,3 +799,58 @@ def test_un_simulateur_ne_scelle_aucun_avertissement():
     """qsim n'a pas d'etat d'appareil : rien a convertir, rien a signaler."""
     run = capture(_ghz(), backend="qsim", seed=7, repetitions=100)
     assert run.manifest.calibration_warnings == []
+
+
+# ---------- defaut 30 : tirages bruts ou post-traites ? ----------
+
+
+def test_par_defaut_capture_scelle_des_tirages_BRUTS(brut):
+    """`capture()` scelle ce qui SORT de la machine."""
+    assert brut.manifest.samples_are_raw is True
+
+
+def test_des_tirages_POST_TRAITES_suspendent_la_borne(archive):
+    """DEFAUT 30, mesure sur une archive reelle d'ibm_marrakesh.
+
+    La correction d'erreur de lecture — methode STANDARD, construite depuis la
+    calibration scellee elle-meme — fait passer la fidelite de 97.17 % a
+    100.90 %. Un resultat HONNETE devient alors « physiquement impossible » aux
+    yeux du verdict, dont la borne suppose des tirages bruts.
+
+    Et l'inverse est pire : sans ce champ, un faussaire annoncant 100 % peut
+    repondre « c'est mitige », et l'excuse devient infalsifiable.
+    """
+    mitige = dataclasses.replace(
+        archive,
+        manifest=dataclasses.replace(archive.manifest, samples_are_raw=False),
+    )
+    rapport = verify_physical_plausibility(mitige)
+    assert rapport.verdict is Plausibility.INDETERMINE
+    assert "PAS bruts" in rapport.reason
+
+
+def test_un_faux_ne_peut_plus_se_cacher_derriere_la_mitigation(archive):
+    """Le champ ne blanchit rien : il retire seulement la BORNE, qui ne
+    s'applique qu'a des tirages bruts. L'archive declare desormais lequel des
+    deux elle contient, et ce choix est SCELLE."""
+    n = 1024
+    parfait = np.zeros((n, 3), dtype=np.uint8)
+    parfait[n // 2 :] = 1
+
+    brut_faux = _truquer(archive, parfait)
+    assert verify_physical_plausibility(brut_faux).verdict is Plausibility.IMPLAUSIBLE
+
+    # Se declarer mitige est visible dans le manifeste, et change le hash.
+    declare = dataclasses.replace(
+        brut_faux,
+        manifest=_resceller_brut(brut_faux.manifest, samples_are_raw=False),
+    )
+    assert declare.manifest.semantic_hash != brut_faux.manifest.semantic_hash
+
+
+def test_la_rawness_entre_dans_le_hash_SEMANTIQUE(archive):
+    """Des tirages corriges ne veulent pas dire la meme chose que des tirages
+    bruts : ce n'est pas une note de bas de page, c'est le sens du resultat."""
+    autre = _resceller_brut(archive.manifest, samples_are_raw=False)
+    assert autre.semantic_hash != archive.manifest.semantic_hash
+    assert autre.content_hash != archive.manifest.content_hash
