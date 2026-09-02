@@ -24,6 +24,13 @@ MESURE FONDATRICE, sur `ibm_marrakesh` le 2026-09-01 :
     observe sur la machine    : 97.27 % +/- 0.51 %
     ecart                     : 0.2 sigma
 
+SON DOMAINE DE VALIDITE, MESURE ET NON SUPPOSE. Le modele est multiplicatif :
+chaque porte reussit independamment. Il ignore les erreurs COHERENTES, qui
+s'accumulent en amplitude et croissent en n^2. Sur ibm_marrakesh, il accuse a
+tort des 10 portes a deux qubits. Au-dela de 3 % d'infidelite predite, le
+verdict rend donc INDETERMINE plutot que de risquer une fausse accusation —
+seule la BORNE reste opposable, et elle l'est a toute profondeur.
+
 CE QUE CE VERDICT N'EST PAS. Ce n'est pas une preuve d'authenticite. Un
 faussaire qui connait la calibration peut fabriquer des tirages plausibles :
 rien ici ne l'en empeche, et la signature detachee reste le seul mecanisme
@@ -49,6 +56,29 @@ POUVOIR_DISCRIMINANT_MIN = 0.5
 resultat totalement depolarise tomberait deja dedans la moitie du temps : le
 controle ne distinguerait plus une bonne execution d'un tirage au hasard."""
 
+INFIDELITE_DOMAINE_MAX = 0.03
+"""Au-dela, le modele multiplicatif ne peut plus CONFIRMER une coherence.
+
+MESURE SUR ibm_marrakesh, GHZ suivi de paires CNOT.CNOT (l'identite, donc
+l'etat ideal ne bouge pas) :
+
+      cz | predit | observe | verdict du modele
+       2 | 97.38% |  96.78% | 1.2 sigma  -> correct
+      10 | 94.09% |  88.77% | 7.2 sigma  -> FAUSSE ACCUSATION
+      34 | 84.87% |  39.26% | 40.7 sigma -> FAUSSE ACCUSATION
+
+Les distributions disent pourquoi. A 34 cz, les etats dominants sont `010`
+(33.5 %) et `101` (23.2 %) : tous deux un basculement du qubit 1, celui que les
+paires CNOT repetees martelent. C'est une erreur COHERENTE qui s'accumule en
+amplitude — elle croit en n^2, pas en n — et `111` oscille (44.9 -> 25.4 -> 5.0
+-> 33.9 %), signature d'une rotation qui tourne. Un modele d'erreurs
+independantes ne peut pas capturer cela.
+
+Le seuil est EMPIRIQUE et encadre par deux points seulement : 2.6 %
+d'infidelite ou le modele tient, 5.9 % ou il a deja lache. Plus de mesures
+l'affineraient. En attendant, il est place du cote prudent.
+"""
+
 SEUIL_SUPPORT = 1e-9
 """Probabilite ideale en dessous de laquelle un bitstring n'est pas dans le
 support. Pas zero : l'arithmetique flottante produit des 1e-17 parasites."""
@@ -73,6 +103,15 @@ class PlausibilityReport:
     predicted_fidelity: Optional[float] = None
     observed_weight: Optional[float] = None
     sigma: Optional[float] = None
+    upper_bound: Optional[float] = None
+    """Poids maximal atteignable sur le support : `F + (1-F) * |support|/2^n`.
+
+    Avec probabilite F le calcul reussit ; sinon le resultat est brouille et
+    tombe dans le support par hasard. VALABLE A TOUTE PROFONDEUR, parce que le
+    bruit non modelise ne peut que degrader — jamais faire mieux que les
+    erreurs declarees. Les six mesures d'`effondrement_en_profondeur.py`, de 2 a
+    258 portes cz, la respectent toutes."""
+    within_domain: Optional[bool] = None
     support_size: Optional[int] = None
     total_bitstrings: Optional[int] = None
     shots: Optional[int] = None
@@ -89,6 +128,8 @@ class PlausibilityReport:
             "predicted_fidelity": self.predicted_fidelity,
             "observed_weight": self.observed_weight,
             "sigma": self.sigma,
+            "upper_bound": self.upper_bound,
+            "within_domain": self.within_domain,
             "support_size": self.support_size,
             "total_bitstrings": self.total_bitstrings,
             "shots": self.shots,
@@ -390,7 +431,33 @@ def verify_physical_plausibility(record, *, measurement_key: Optional[str] = Non
     ecart_type = math.sqrt(p * (1 - p) / n_shots)
     sigma = abs(predite - observe) / ecart_type
 
-    if sigma < 2:
+    # LA BORNE, valable a TOUTE profondeur. Avec probabilite F le calcul
+    # reussit ; sinon le resultat est brouille et tombe dans le support par
+    # hasard. Le bruit non modelise ne peut que degrader : depasser cette borne
+    # est impossible, quelle que soit la profondeur.
+    hasard = len(support) / total_bitstrings
+    borne = predite + (1.0 - predite) * hasard
+    depassement = (observe - borne) / ecart_type
+
+    dans_le_domaine = (1.0 - predite) <= INFIDELITE_DOMAINE_MAX
+
+    if depassement > 3:
+        verdict, raison = (
+            Plausibility.IMPLAUSIBLE,
+            f"le resultat archive DEPASSE ce que la machine declaree peut "
+            f"produire au mieux ({100 * borne:.2f} %) : impossible, quelle que "
+            "soit la profondeur du circuit",
+        )
+    elif not dans_le_domaine:
+        verdict, raison = (
+            Plausibility.INDETERMINE,
+            f"infidelite predite de {100 * (1 - predite):.1f} %, au-dela du "
+            f"domaine ou ce modele est fiable ({100 * INFIDELITE_DOMAINE_MAX:.0f} %). "
+            "Mesure sur ibm_marrakesh : des 10 portes a deux qubits, les "
+            "erreurs coherentes s'accumulent et le modele accuse a tort. "
+            "Seule l'impossibilite a pu etre ecartee, pas la coherence",
+        )
+    elif sigma < 2:
         verdict, raison = (
             Plausibility.PLAUSIBLE,
             "le resultat archive est coherent avec l'etat d'appareil scelle",
@@ -413,6 +480,8 @@ def verify_physical_plausibility(record, *, measurement_key: Optional[str] = Non
         predicted_fidelity=predite,
         observed_weight=observe,
         sigma=sigma,
+        upper_bound=borne,
+        within_domain=dans_le_domaine,
         support_size=len(support),
         total_bitstrings=total_bitstrings,
         shots=n_shots,

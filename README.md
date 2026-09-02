@@ -187,6 +187,62 @@ peu de tirages, ou un circuit dont la loi idéale couvre tous les bitstrings —
 là, un résultat totalement dépolarisé tomberait déjà dans le support, et se
 taire est la seule réponse honnête.
 
+### Jusqu'où l'archive prouve-t-elle encore quelque chose ?
+
+J'ai poussé le verdict jusqu'à ce qu'il casse, sur `ibm_marrakesh`. Le circuit :
+un GHZ suivi de N paires `CNOT·CNOT` — qui valent l'identité. **L'état idéal ne
+change jamais**, seul le bruit s'accumule.
+
+| `cz` | Prédit | Observé | Verdict d'alors |
+|---|---|---|---|
+| 2 | 97,38 % | 96,78 % | 1,2 σ — correct |
+| 10 | 94,09 % | 88,77 % | **7,2 σ — fausse accusation** |
+| 34 | 84,87 % | 39,26 % | **40,7 σ — fausse accusation** |
+| 258 | 32,42 % | 44,43 % | 8,2 σ |
+
+**Dès dix portes à deux qubits, mon verdict criait `IMPLAUSIBLE` sur une
+archive parfaitement honnête.** C'est le pire mode de défaillance possible pour
+cet outil.
+
+Les distributions disent pourquoi. À 34 `cz`, les états dominants sont `010`
+(33,5 %) et `101` (23,2 %) — tous deux un basculement du **qubit 1**, celui que
+les paires `CNOT` répétées martèlent. Et `111` *oscille* : 44,9 → 25,4 → 5,0 →
+33,9 %. Ce n'est pas de la décohérence, c'est une **erreur cohérente** qui
+s'accumule en amplitude et croît en `n²`. Un modèle d'erreurs indépendantes ne
+peut pas la voir.
+
+**La correction tient en deux pièces.**
+
+D'abord une **borne**, valable à toute profondeur :
+
+```
+maximum atteignable = F + (1 − F) × |support| / 2ⁿ
+```
+
+Avec probabilité `F` le calcul réussit ; sinon le résultat brouillé tombe dans
+le support par hasard. Le bruit non modélisé ne peut que *dégrader* — jamais
+faire mieux que les erreurs déclarées. Les six mesures honnêtes, de 2 à 258
+portes, la respectent toutes. Un faux annonçant 100 % la viole **à chaque
+profondeur**, de +1,96 à +50,68 points.
+
+Ensuite un **domaine de validité** : au-delà de 3 % d'infidélité prédite, le
+verdict rend `INDETERMINE` plutôt que de risquer une fausse accusation.
+
+```
+plausibilite physique : INDETERMINE
+  predit par l'appareil : 84.87 %
+  observe dans l'archive: 39.26 %
+  maximum atteignable   : 88.66 %
+  domaine du modele     : NON - seule la borne s'applique
+```
+
+Le seuil de 3 % est **empirique et encadré par deux points seulement** : 2,6 %
+d'infidélité où le modèle tient, 5,9 % où il a déjà lâché. Plus de mesures
+l'affineraient ; en attendant il est placé du côté prudent.
+
+Résultat : les archives honnêtes ne sont plus jamais accusées, et les faux
+restent attrapés partout.
+
 ### Pourquoi compter les portes ne suffisait pas
 
 Ma première version prédisait la fidélité à partir de `gate_counts` : *deux*

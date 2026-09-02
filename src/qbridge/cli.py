@@ -636,7 +636,17 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         lignes_phys += [
             _line("  predit par l'appareil", f"{100 * physique.predicted_fidelity:.2f} %"),
             _line("  observe dans l'archive", f"{100 * physique.observed_weight:.2f} %"),
+            _line(
+                "  maximum atteignable",
+                f"{100 * physique.upper_bound:.2f} %"
+                if physique.upper_bound is not None
+                else "?",
+            ),
             _line("  ecart", f"{physique.sigma:.1f} sigma"),
+            _line(
+                "  domaine du modele",
+                "oui" if physique.within_domain else "NON - seule la borne s'applique",
+            ),
             _line(
                 "  support ideal",
                 f"{physique.support_size}/{physique.total_bitstrings} bitstrings",

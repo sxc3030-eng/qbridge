@@ -86,15 +86,71 @@ def _tirages_a_la_fidelite(fidelite, n=1024, graine=0):
     return tirages
 
 
+INFIDELITE_CIBLE = 0.025
+"""Cible des fixtures nominales : DANS le domaine de validite (<= 3 %), mais
+assez loin de 1.0 pour qu'un faux annoncant 100 % reste detectable."""
+
+
+def _calibration_mise_a_l_echelle(instantane, facteur):
+    """Meme instantane, erreurs multipliees par `facteur`.
+
+    `FakeManilaV2` affiche 16.6 % d'infidelite sur ce circuit : hors du domaine
+    de validite, et a juste titre. Un cas NOMINAL demande une machine plus
+    propre, donc on en fabrique une plutot que de tordre le seuil.
+    """
+    from qbridge.calibration import CalibrationSnapshot, DatedValue
+
+    bruyants = {"gate_error", "readout_error", "prob_meas0_prep1", "prob_meas1_prep0"}
+
+    def echelle(params):
+        return {
+            nom: DatedValue(
+                dv.value * facteur if nom in bruyants else dv.value, dv.date, dv.unit
+            )
+            for nom, dv in params.items()
+        }
+
+    return CalibrationSnapshot.build(
+        device_id=instantane.device_id,
+        device_version=instantane.device_version,
+        qubits={k: echelle(v) for k, v in instantane.qubits.items()},
+        gates={k: echelle(v) for k, v in instantane.gates.items()},
+        basis_gates=instantane.basis_gates,
+        coupling_map=instantane.coupling_map,
+    )
+
+
+def _resceller(manifeste, calibration_json):
+    """Rescelle les empreintes apres modification, comme le ferait `build`."""
+    m = dataclasses.replace(
+        manifeste,
+        calibration_json=calibration_json,
+        semantic_hash="",
+        content_hash="",
+    )
+    m = dataclasses.replace(m, semantic_hash=m._compute_semantic_hash())
+    return dataclasses.replace(m, content_hash=m._compute_content_hash())
+
+
 @pytest.fixture
 def archive(brut):
-    """Archive dont les tirages COLLENT a la calibration scellee."""
+    """Archive NOMINALE : machine propre, tirages colles a sa calibration."""
     from qbridge.calibration import CalibrationSnapshot
 
     instantane = CalibrationSnapshot.from_json(brut.manifest.calibration_json)
-    comptes = json.loads(brut.manifest.device_provenance_json)["gate_counts"]
-    attendue, _, _ = fidelite_predite(instantane, comptes)
-    return _truquer(brut, _tirages_a_la_fidelite(attendue))
+    operations = json.loads(brut.manifest.device_provenance_json)["operations"]
+
+    brute, _, _ = fidelite_predite(instantane, {}, operations)
+    facteur = INFIDELITE_CIBLE / (1.0 - brute)
+    propre = _calibration_mise_a_l_echelle(instantane, facteur)
+
+    attendue, _, _ = fidelite_predite(propre, {}, operations)
+    assert 1.0 - attendue <= 0.03, "la fixture nominale doit etre DANS le domaine"
+
+    record = dataclasses.replace(
+        brut, manifest=_resceller(brut.manifest, propre.to_json())
+    )
+    return _truquer(record, _tirages_a_la_fidelite(attendue))
 
 
 # ---------- le cas nominal ----------
@@ -157,12 +213,13 @@ def test_un_resultat_FABRIQUE_est_declare_implausible(archive):
     assert rapport.sigma > 4
 
 
-def test_un_resultat_trop_BRUYANT_est_aussi_implausible(archive):
-    """La detection va dans les deux sens : une archive qui annonce un bruit
-    bien pire que ce que la machine declare est tout aussi incoherente."""
+def test_un_resultat_trop_BRUYANT_est_refuse_DANS_le_domaine(archive):
+    """Dans le domaine de validite, la detection va dans les deux sens : une
+    archive bien plus bruyante que la machine declaree est incoherente."""
     generateur = np.random.default_rng(0)
     bruit = generateur.integers(0, 2, size=(1024, 3)).astype(np.uint8)
     rapport = verify_physical_plausibility(_truquer(archive, bruit))
+    assert rapport.within_domain is True
     assert rapport.verdict is Plausibility.IMPLAUSIBLE
 
 
@@ -473,3 +530,81 @@ def test_la_lecture_exacte_utilise_le_qubit_CONCERNE(archive):
     bon, _, _ = fidelite_predite(instantane, {}, {f"measure:{meilleur}": 3})
     mauvais, _, _ = fidelite_predite(instantane, {}, {f"measure:{pire}": 3})
     assert mauvais < bon
+
+
+# ---------- le domaine de validite du modele ----------
+
+
+def _hors_domaine(brut, fidelite_voulue):
+    """Archive dont l'infidelite predite depasse le domaine du modele."""
+    return _truquer(brut, _tirages_a_la_fidelite(fidelite_voulue))
+
+
+def test_hors_domaine_un_resultat_HONNETE_n_est_plus_accuse(brut):
+    """LA correction, mesuree sur ibm_marrakesh.
+
+    Un GHZ suivi de paires CNOT.CNOT — l'identite, donc l'etat ideal ne bouge
+    pas. A 10 portes cz le modele predisait 94.09 %, la machine a rendu
+    88.77 %, et le verdict criait IMPLAUSIBLE a 7.2 sigma sur une archive
+    parfaitement honnete. A 34 cz : 40.7 sigma.
+
+    La cause est visible dans les distributions : a 34 cz les etats dominants
+    sont `010` (33.5 %) et `101` (23.2 %), tous deux un basculement du qubit
+    que les paires CNOT martelent. Erreur COHERENTE, qui s'accumule en
+    amplitude et croit en n^2 — un modele d'erreurs independantes ne peut pas
+    la voir.
+
+    Une fausse accusation est le pire mode de defaillance de cet outil.
+    """
+    rapport = verify_physical_plausibility(_hors_domaine(brut, 0.45))
+    assert rapport.within_domain is False
+    assert rapport.verdict is Plausibility.INDETERMINE
+    assert "coherentes" in rapport.reason
+
+
+def test_hors_domaine_les_chiffres_restent_rendus(brut):
+    """INDETERMINE ne doit pas vouloir dire « rapport vide » : le lecteur a
+    besoin des chiffres pour juger lui-meme."""
+    rapport = verify_physical_plausibility(_hors_domaine(brut, 0.45))
+    assert rapport.predicted_fidelity is not None
+    assert rapport.observed_weight is not None
+    assert rapport.upper_bound is not None
+    assert rapport.error_budget
+
+
+def test_la_borne_reste_opposable_HORS_domaine(brut):
+    """Le bruit non modelise ne peut que degrader, jamais faire mieux que les
+    erreurs declarees. Depasser la borne est donc impossible a TOUTE
+    profondeur — verifie sur les six archives reelles, de 2 a 258 portes cz."""
+    n = 1024
+    parfait = np.zeros((n, 3), dtype=np.uint8)
+    parfait[n // 2 :] = 1
+    rapport = verify_physical_plausibility(_truquer(brut, parfait))
+    assert rapport.within_domain is False
+    assert rapport.verdict is Plausibility.IMPLAUSIBLE
+    assert rapport.observed_weight > rapport.upper_bound
+    assert "DEPASSE" in rapport.reason
+
+
+def test_la_borne_vaut_F_plus_le_reste_au_hasard(archive):
+    """`F + (1-F) * |support|/2^n` : avec proba F le calcul reussit, sinon le
+    resultat brouille tombe dans le support par hasard."""
+    rapport = verify_physical_plausibility(archive)
+    hasard = rapport.support_size / rapport.total_bitstrings
+    attendue = rapport.predicted_fidelity + (1 - rapport.predicted_fidelity) * hasard
+    assert abs(rapport.upper_bound - attendue) < 1e-12
+    assert rapport.upper_bound > rapport.predicted_fidelity
+
+
+def test_la_borne_ne_peut_jamais_depasser_un(archive):
+    rapport = verify_physical_plausibility(archive)
+    assert rapport.upper_bound <= 1.0
+
+
+def test_le_domaine_suit_l_infidelite_predite(brut):
+    from qbridge.plausibility import INFIDELITE_DOMAINE_MAX
+
+    assert INFIDELITE_DOMAINE_MAX == 0.03
+    rapport = verify_physical_plausibility(_hors_domaine(brut, 0.5))
+    assert (1 - rapport.predicted_fidelity) > INFIDELITE_DOMAINE_MAX
+    assert rapport.within_domain is False
