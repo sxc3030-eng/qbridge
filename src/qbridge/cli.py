@@ -619,10 +619,49 @@ def _cmd_verify(args: argparse.Namespace) -> int:
                 _line("  detail", rapport.detail),
             ]
 
+    # ---- plausibilite physique ----
+    # UN VERDICT SEPARE, ET UN CODE DE SORTIE SEPARE. L'integrite dit « ces
+    # octets sont ceux qui ont ete scelles ». La plausibilite dit « ces octets
+    # sont coherents avec la machine declaree ». Les confondre ferait lire
+    # « archive falsifiee » sur une execution simplement surprenante, et
+    # inversement ferait passer un faux pour un probleme d'integrite. Par
+    # defaut le verdict est RAPPORTE sans peser sur le code de sortie ;
+    # `--physique-stricte` le rend bloquant pour qui le veut.
+    from qbridge.plausibility import Plausibility, verify_physical_plausibility
+
+    physique = verify_physical_plausibility(record)
+    phys_info: Dict[str, Any] = physique.to_dict()
+    lignes_phys = [_line("plausibilite physique", physique.verdict.name)]
+    if physique.predicted_fidelity is not None:
+        lignes_phys += [
+            _line("  predit par l'appareil", f"{100 * physique.predicted_fidelity:.2f} %"),
+            _line("  observe dans l'archive", f"{100 * physique.observed_weight:.2f} %"),
+            _line("  ecart", f"{physique.sigma:.1f} sigma"),
+            _line(
+                "  support ideal",
+                f"{physique.support_size}/{physique.total_bitstrings} bitstrings",
+            ),
+        ]
+        if physique.error_budget:
+            part = ", ".join(
+                f"{k} {100 * v:.0f} %"
+                for k, v in sorted(physique.error_budget.items(), key=lambda x: -x[1])
+            )
+            lignes_phys.append(_line("  budget d'erreur", part))
+    lignes_phys.append(_line("  raison", physique.reason))
+    for avertissement in physique.warnings:
+        lignes_phys.append(_line("  avertissement", avertissement))
+
     code = EXIT_OK if intact else EXIT_MISMATCH
+    if (
+        getattr(args, "physique_stricte", False)
+        and physique.verdict is Plausibility.IMPLAUSIBLE
+    ):
+        code = EXIT_MISMATCH
 
     payload = {
         "directory": str(Path(args.directory)),
+        "physical_plausibility": phys_info,
         "manifest_intact": report.manifest_intact,
         "results_intact": report.results_intact,
         "measurement_keys": list(report.measurement_keys),
@@ -647,6 +686,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         _line("tirages archives", report.total_shots),
         _line("detail", report.detail),
         *lignes_sig,
+        *lignes_phys,
         "  Aucun circuit n'a ete execute.",
     ]
     _emit(payload, args.json_output, text)
@@ -1109,6 +1149,16 @@ def _build_parser() -> argparse.ArgumentParser:
     verify_p.add_argument(
         "--key-id",
         help="identifiant de cle attendu ; obligatoire des qu'une cle est fournie",
+    )
+    verify_p.add_argument(
+        "--physique-stricte",
+        action="store_true",
+        dest="physique_stricte",
+        help=(
+            "faire echouer la commande si le resultat archive est incoherent "
+            "avec l'etat d'appareil scelle. Desactive par defaut : la "
+            "plausibilite est un jugement de physique, pas d'integrite."
+        ),
     )
     verify_p.set_defaults(handler=_cmd_verify)
 

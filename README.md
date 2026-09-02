@@ -42,6 +42,7 @@ exactement là où ce genre d'outil échoue :
 | **Bit-exact** | même simulateur, mêmes octets | un simulateur |
 | **Statistique** | distributions compatibles | une machine — c'est son plafond |
 | **Archivistique** | les tirages archivés sont bien ceux qui ont été scellés | **rien du tout** |
+| **Plausibilité physique** | les tirages sont cohérents avec la machine déclarée | un simulateur |
 
 La troisième est la plus solide, et c'est celle qui compte vraiment. Elle ne
 dépend d'aucun matériel, d'aucun simulateur, ni même de qsim installé.
@@ -133,6 +134,68 @@ Vérification faite, l'écart vaut **0,7 σ** — c'est du bruit d'échantillonn
 pas un effet. L'excès d'erreurs voisines de `111` plutôt que de `000` (20
 contre 8) est plus intéressant à **2,3 σ**, mais reste sous le seuil : c'est
 suggestif, pas démontré. Il faudrait plus de tirages pour trancher.
+
+## Attraper un faux que rien d'autre n'attrape
+
+Voici une archive fabriquée de toutes pièces : un GHZ **parfait**, 100 % sur
+`000` et `111`, sur une machine dont la calibration scellée dit qu'elle ne peut
+pas dépasser 97,4 %. Elle est scellée dans les règles — empreintes recalculées,
+tout est cohérent.
+
+```
+$ qbridge verify runs/le_faux
+  manifeste             : intact
+  resultats             : intacts          <- l'integrite est irreprochable
+  plausibilite physique : IMPLAUSIBLE
+    predit par l'appareil : 97.38 %
+    observe dans l'archive: 100.00 %
+    ecart                 : 5.2 sigma
+  code de sortie : 0
+```
+
+**Le code de sortie reste 0.** L'intégrité de ce faux est irréprochable : les
+octets sont exactement ceux que son auteur a scellés. Aucun hash, aucune
+signature ne peut le dire. Seule la physique le trahit.
+
+C'est le quatrième verdict, et il ne coûte rien à vérifier — un simulateur, pas
+un QPU. Sur la vraie archive d'`ibm_marrakesh` :
+
+```
+  plausibilite physique : PLAUSIBLE
+    predit par l'appareil : 97.38 %
+    observe dans l'archive: 98.05 %
+    ecart                 : 1.3 sigma
+    budget d'erreur       : measure 74 %, cz 20 %, sx 6 %
+```
+
+**Trois choses qu'il faut dire clairement :**
+
+- **Ce n'est pas une preuve d'authenticité.** Un faussaire qui connaît la
+  calibration peut fabriquer des tirages plausibles. Ce verdict attrape
+  l'incohérence, pas la malveillance compétente ; la signature détachée reste
+  le seul mécanisme d'opposabilité.
+- **Sa résolution est limitée.** À 1024 tirages, l'écart type vaut 0,5 point :
+  il faut environ **2 points** d'écart pour déclencher `IMPLAUSIBLE`. Un faux
+  annonçant 98,5 % passerait. Plus de tirages, plus de finesse.
+- **Il ne change pas le code de sortie par défaut.** La plausibilité est un
+  jugement de physique, pas d'intégrité. Les confondre ferait lire « archive
+  falsifiée » sur une exécution simplement surprenante. `--physique-stricte`
+  le rend bloquant pour qui le veut.
+
+Et quand il ne peut rien conclure, il le dit : pas de calibration scellée, trop
+peu de tirages, ou un circuit dont la loi idéale couvre tous les bitstrings —
+là, un résultat totalement dépolarisé tomberait déjà dans le support, et se
+taire est la seule réponse honnête.
+
+### Il a attrapé IBM au passage
+
+Le premier cas nominal du test échouait. Enquête faite : `FakeManilaV2`, le
+simulateur factice livré par IBM, **déclare** des erreurs de lecture de 3,5 %,
+2,2 % et 9,6 % — et rend 1024/1024 tirages **parfaits**. Il publie du bruit et
+simule sans.
+
+Ce n'était pas un défaut de qbridge : le verdict faisait son travail, sur
+l'outil d'IBM lui-même. C'est un test à part entière maintenant.
 
 ## Ce que ce premier vrai job a révélé du code
 
