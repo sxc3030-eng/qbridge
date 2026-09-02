@@ -32,7 +32,7 @@ def test_les_deux_canaux_reels_passent():
 @pytest.mark.parametrize(
     "saisie",
     [
-        "IBMid-693001YU6L",        # LE cas vecu : un identifiant de compte
+        "IBMid-0000000000",        # LE cas vecu : un identifiant de compte
         "crn:v1:bluemix:public:",  # un CRN d'instance
         "sxc3030@gmail.com",       # une adresse courriel
         "ibm_quantum",             # l'ancien nom, retire apres migration
@@ -87,7 +87,7 @@ def test_un_nom_de_service_est_accepte():
 
 def test_un_ibmid_n_est_pas_une_instance():
     """LE cas vecu, transpose : un IBMid identifie une personne."""
-    valeur, probleme = configurer_ibm.instance_valide("IBMid-693001YU6L")
+    valeur, probleme = configurer_ibm.instance_valide("IBMid-0000000000")
     assert valeur is None
     assert "PERSONNE" in probleme
 
