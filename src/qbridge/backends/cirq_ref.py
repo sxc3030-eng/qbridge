@@ -15,6 +15,16 @@ import numpy as np
 class CirqReferenceBackend:
     """Enveloppe `cirq.Simulator`. Instance fraiche a chaque appel."""
 
+    USES_QSIM_KERNEL = False
+    """DEFAUT 28. Ce backend enveloppe `cirq.Simulator` : aucune ligne de qsim
+    ne s'execute. Le manifeste scellait pourtant `qsim_instruction_set` et
+    `qsim_gpu_mode`, decrivant un moteur qui n'avait pas tourne.
+
+    C'est le defaut 21 sous un autre nom. Je l'avais corrige ce matin pour le
+    seul backend ou je l'avais remarque — IBM — sans balayer les autres. Une
+    correction qui ne traite qu'une instance laisse la classe entiere en place.
+    """
+
     name = "cirq-reference"
     BIT_EXACT_REPLAYABLE = True
     """Attribut de CLASSE : lisible sans construire d'instance.

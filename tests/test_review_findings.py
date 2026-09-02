@@ -441,3 +441,38 @@ def test_une_archive_sans_tirages_ne_se_confond_pas_avec_une_archive_vide():
         state_vector_hash=base.state_vector_hash,
     )
     assert sans.content_hash() != vide.content_hash()
+
+
+def test_aucun_backend_ne_scelle_un_moteur_qu_il_n_utilise_PAS():
+    """DEFAUT 28, et c'est le defaut 21 sous un autre nom.
+
+    Le manifeste scelle une empreinte du noyau qsim — jeu d'instructions SIMD,
+    mode GPU — dans le hash SEMANTIQUE. Pour un backend qui n'appelle jamais
+    qsim, cela decrit un moteur qui n'a pas tourne.
+
+    Corrige ce matin pour `ibm-runtime` seulement, la ou je l'avais remarque.
+    `cirq-reference` enveloppe `cirq.Simulator` et portait toujours le defaut :
+    reparer une instance ne repare pas la classe. Ce test balaye TOUS les
+    backends pour que la question ne se repose plus un par un.
+    """
+    import cirq
+
+    from qbridge import capture
+    from qbridge.backends import BACKENDS
+
+    utilise_qsim = {"qsim", "hardware-sim"}  # verifie : les deux importent qsimcirq
+
+    q = cirq.LineQubit.range(2)
+    circuit = cirq.Circuit([cirq.H(q[0]), cirq.measure(*q, key="m")])
+
+    for nom in sorted(BACKENDS):
+        if nom == "hardware-sim":
+            continue  # exige une calibration, couvert par ses propres tests
+        manifeste = capture(circuit, backend=nom, seed=7, repetitions=20).manifest
+        if nom in utilise_qsim:
+            assert manifeste.kernel, f"{nom} utilise qsim : son noyau doit etre scelle"
+        else:
+            assert manifeste.kernel == {}, (
+                f"{nom} n'utilise pas qsim : sceller son noyau decrirait un "
+                "moteur qui n'a pas tourne"
+            )
