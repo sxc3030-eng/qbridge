@@ -854,3 +854,94 @@ def test_la_rawness_entre_dans_le_hash_SEMANTIQUE(archive):
     autre = _resceller_brut(archive.manifest, samples_are_raw=False)
     assert autre.semantic_hash != archive.manifest.semantic_hash
     assert autre.content_hash != archive.manifest.content_hash
+
+
+# ---------- defaut 31 : la lecture depend de l'ETAT ----------
+
+
+def _marginales(record, proba_un):
+    place = json.loads(record.manifest.device_provenance_json)["initial_layout"]
+    return {f"q({i})": proba_un for i in place}
+
+
+def test_le_scalaire_de_lecture_est_EXACT_a_cinquante_cinquante(brut):
+    """Constat qui delimite le defaut 31.
+
+    IBM publie `readout_error` comme la MOYENNE de `prob_meas0_prep1` et
+    `prob_meas1_prep0` : (0.01580 + 0.05480)/2 = 0.03530 sur q(0) de
+    FakeManila. Pour un GHZ, dont chaque qubit vaut 1 une fois sur deux, le
+    scalaire tombe donc juste — et la correction ne change rien.
+    """
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(brut.manifest.calibration_json)
+    operations = json.loads(brut.manifest.device_provenance_json)["operations"]
+
+    sans, _, _ = fidelite_predite(instantane, {}, operations)
+    avec, _, _ = fidelite_predite(
+        instantane, {}, operations, _marginales(brut, 0.5)
+    )
+    assert abs(avec - sans) < 1e-9
+
+
+def test_un_circuit_DESEQUILIBRE_revele_le_defaut(brut):
+    """DEFAUT 31, mesure par circuits-pieges sur ibm_marrakesh :
+
+        lecture DECLAREE (scalaire) : 97.43 %
+        lecture MESUREE sur |000>   : 99.25 %
+        lecture MESUREE sur |111>   : 97.62 %
+
+    Lire un 1 coute 1.6 point de plus que lire un 0 : pendant les 2.7 us de
+    mesure, l'etat excite se relaxe. Sur FakeManila l'ecart est plus large
+    encore — 10 points entre les deux extremes.
+    """
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(brut.manifest.calibration_json)
+    operations = json.loads(brut.manifest.device_provenance_json)["operations"]
+
+    scalaire, _, _ = fidelite_predite(instantane, {}, operations)
+    vers_un, _, _ = fidelite_predite(instantane, {}, operations, _marginales(brut, 1.0))
+    vers_zero, _, _ = fidelite_predite(instantane, {}, operations, _marginales(brut, 0.0))
+
+    assert vers_un < scalaire < vers_zero, (
+        "un circuit qui doit rendre des 1 est PLUS dur a lire qu'un qui rend "
+        "des 0 : le scalaire tombe entre les deux et ment sur les deux"
+    )
+    assert vers_zero - vers_un > 0.05, "l'ecart doit etre large, pas marginal"
+
+
+def test_la_lecture_selon_l_etat_interpole_entre_les_deux(brut):
+    from qbridge.calibration import CalibrationSnapshot
+    from qbridge.plausibility import _lecture_selon_l_etat
+
+    instantane = CalibrationSnapshot.from_json(brut.manifest.calibration_json)
+    cle = sorted(instantane.qubits)[0]
+    params = instantane.qubits[cle]
+
+    assert _lecture_selon_l_etat(instantane, cle, 0.0) == pytest.approx(
+        params["prob_meas1_prep0"].value
+    )
+    assert _lecture_selon_l_etat(instantane, cle, 1.0) == pytest.approx(
+        params["prob_meas0_prep1"].value
+    )
+    moitie = _lecture_selon_l_etat(instantane, cle, 0.5)
+    assert moitie == pytest.approx(params["readout_error"].value, abs=1e-9), (
+        "a 50/50 on doit retrouver exactement le scalaire publie par IBM"
+    )
+
+
+def test_un_qubit_sans_parametres_asymetriques_ne_casse_rien(brut):
+    from qbridge.plausibility import _lecture_selon_l_etat
+    from qbridge.calibration import CalibrationSnapshot
+
+    instantane = CalibrationSnapshot.from_json(brut.manifest.calibration_json)
+    assert _lecture_selon_l_etat(instantane, "q(9999)", 0.5) is None
+
+
+def test_le_verdict_calcule_les_marginales_tout_seul(archive):
+    """Le placement scelle fait le lien logique -> physique : le verdict n'a
+    besoin de rien d'autre pour savoir quel etat chaque qubit doit porter."""
+    rapport = verify_physical_plausibility(archive)
+    assert rapport.predicted_fidelity is not None
+    assert rapport.verdict is Plausibility.PLAUSIBLE

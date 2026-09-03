@@ -176,6 +176,35 @@ def _erreur_moyenne(snapshot, nom_porte: str) -> Optional[float]:
     return sum(valeurs) / len(valeurs) if valeurs else None
 
 
+def _lecture_selon_l_etat(
+    snapshot, cle_qubit: str, proba_un: float
+) -> Optional[float]:
+    """Erreur de lecture d'un qubit, ponderee par l'etat qu'il doit porter.
+
+    DEFAUT 31, mesure par circuits-pieges sur ibm_marrakesh :
+
+        lecture DECLAREE par IBM (scalaire)  : 97.43 %
+        lecture MESUREE sur |000> (repos)    : 99.25 %
+        lecture MESUREE sur |111> (plein)    : 97.62 %
+
+    Lire un `1` coute 1.6 point de plus que lire un `0` : pendant les 2.7 us de
+    mesure, l'etat excite se relaxe. Le scalaire `readout_error` MOYENNE ces
+    deux realites, et le modele l'utilisait tel quel — alors que
+    `prob_meas0_prep1` et `prob_meas1_prep0` sont scelles juste a cote.
+
+    `proba_un` est la probabilite IDEALE que ce qubit vaille 1. Pour un GHZ elle
+    vaut 0.5 sur chaque qubit ; pour un circuit deterministe, 0 ou 1.
+    """
+    params = snapshot.qubits.get(cle_qubit)
+    if not params:
+        return None
+    p01 = params.get("prob_meas0_prep1")  # prepare 1, lu 0
+    p10 = params.get("prob_meas1_prep0")  # prepare 0, lu 1
+    if p01 is None or p10 is None:
+        return None
+    return proba_un * p01.value + (1.0 - proba_un) * p10.value
+
+
 def _erreur_de_lecture(snapshot) -> Optional[float]:
     """Erreur de lecture moyenne.
 
@@ -201,6 +230,7 @@ def fidelite_predite(
     snapshot,
     gate_counts: Dict[str, int],
     operations: Optional[Dict[str, int]] = None,
+    marginales: Optional[Dict[str, float]] = None,
 ) -> Tuple[float, Dict[str, float], List[str]]:
     """Probabilite qu'AUCUNE erreur ne survienne, selon l'etat scelle.
 
@@ -217,7 +247,7 @@ def fidelite_predite(
     paires cz vont de 1.65e-3 a 3.63e-3, un facteur 2.2.
     """
     if operations:
-        return _fidelite_exacte(snapshot, operations)
+        return _fidelite_exacte(snapshot, operations, marginales)
 
     fidelite = 1.0
     budget: Dict[str, float] = {}
@@ -254,7 +284,9 @@ def fidelite_predite(
 
 
 def _fidelite_exacte(
-    snapshot, operations: Dict[str, int]
+    snapshot,
+    operations: Dict[str, int],
+    marginales: Optional[Dict[str, float]] = None,
 ) -> Tuple[float, Dict[str, float], List[str]]:
     """Fidelite lue sur les portes qui ont REELLEMENT servi.
 
@@ -273,6 +305,16 @@ def _fidelite_exacte(
 
         params = snapshot.gates.get(cle)
         erreur = params.get("gate_error").value if params and "gate_error" in params else None
+
+        if nom == "measure" and marginales is not None:
+            # DEFAUT 31 : la lecture depend de l'etat que le qubit doit porter.
+            qubit = cle.split(":", 1)[1] if ":" in cle else ""
+            if qubit in marginales:
+                selon_etat = _lecture_selon_l_etat(
+                    snapshot, qubit, marginales[qubit]
+                )
+                if selon_etat is not None:
+                    erreur = selon_etat
 
         if erreur is None and nom == "measure":
             # Les instantanes factices ne scellent pas `measure` comme porte :
@@ -416,6 +458,8 @@ def verify_physical_plausibility(record, *, measurement_key: Optional[str] = Non
             "l'incertitude statistique noierait tout ecart"
         )
 
+    import cirq
+
     instantane = CalibrationSnapshot.from_json(manifeste.calibration_json)
 
     # DEFAUT 25. La prediction sort de ces valeurs ; rien ne disait de quand
@@ -443,15 +487,37 @@ def verify_physical_plausibility(record, *, measurement_key: Optional[str] = Non
             "ce n'est PAS l'etat de l'appareil a un instant"
         )
 
+    # Marginales IDEALES par qubit physique : la probabilite que chacun doive
+    # porter un 1. Elles disent quelle moitie de l'asymetrie de lecture
+    # s'applique. Le placement scelle fait le lien logique -> physique.
+    marginales = None
+    probas_ideales = _probabilites_ideales(
+        cirq.read_json(json_text=manifeste.circuit_json), cle
+    )
+    placement = provenance.get("initial_layout")
+    if probas_ideales is not None and placement:
+        n_q = int(round(math.log2(len(probas_ideales))))
+        if len(placement) >= n_q:
+            marginales = {}
+            for logique in range(n_q):
+                bit = n_q - 1 - logique  # le premier qubit mesure est en tete
+                masque = 1 << bit
+                p_un = float(
+                    sum(
+                        probas_ideales[e]
+                        for e in range(len(probas_ideales))
+                        if e & masque
+                    )
+                )
+                marginales[f"q({placement[logique]})"] = p_un
+
     predite, budget, avert_fid = fidelite_predite(
-        instantane, gate_counts, provenance.get("operations")
+        instantane, gate_counts, provenance.get("operations"), marginales
     )
     avertissements.extend(avert_fid)
 
-    import cirq
-
     circuit = cirq.read_json(json_text=manifeste.circuit_json)
-    probas = _probabilites_ideales(circuit, cle)
+    probas = probas_ideales
     if probas is None or len(probas) != 2**n_qubits:
         return indetermine(
             "distribution ideale incalculable pour ce circuit : le controle "
