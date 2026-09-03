@@ -45,9 +45,29 @@ erreurs declarees, tout ce qu'elle ignore — erreurs coherentes, diaphonie,
 derive — ne peut que degrader, donc accuser un resultat « moins bon que
 predit » est faux par construction.
 
-Le principe est desormais MESURE : 1.57 point d'optimisme, a 5 sigma, et la
-prediction etait horodatee avant que la moindre donnee existe. Ce n'est plus un
-raisonnement, c'est un chiffre.
+Le principe est desormais MESURE, et la prediction etait horodatee avant que la
+moindre donnee existe.
+
+MAIS LA REPLICATION CORRIGE L'AMPLITUDE. Une SECONDE serie pre-enregistree,
+memes chaines, vingt minutes plus tard :
+
+    serie 1 (12:53) : biais -1.57 point,  5.0 sigma
+    serie 2 (13:11) : biais -0.40 point,  1.3 sigma
+    ecart entre les deux : 2.6 sigma
+
+Les deux series ne mesurent pas le meme biais. Le « 1.57 point a 5 sigma » de
+la premiere decrivait UNE session, pas la machine — exactement le genre de
+chiffre qu'on cite ensuite comme une constante.
+
+CE QUI TIENT APRES REPLICATION : le SIGNE, pas l'amplitude. Sur dix mesures
+pre-enregistrees, sept sont negatives, et les dix ensemble donnent -0.99 point
+a 4.5 sigma. Le modele penche du cote optimiste, ce qui suffit a justifier que
+seule la borne superieure puisse accuser. L'amplitude, elle, derive avec
+l'appareil.
+
+C'est le pre-enregistrement qui rend cette correction possible : les deux
+series etaient scellees et datees avant leurs donnees, donc aucune des deux ne
+peut etre ecartee comme « un mauvais jour ».
 """
 
 from __future__ import annotations
@@ -62,6 +82,7 @@ from qbridge import capture
 from qbridge.backends.ibm_runtime import IbmRuntimeBackend, backend_reel
 from qbridge.cli import _adoucir_les_flux
 from qbridge.digest import canonical_json, sha256_of
+from qbridge.journal import Journal
 from qbridge.record import RunRecord
 from qbridge.timestamp import Timestamp, stamp
 from qbridge.verdict import bitstring_counts
@@ -70,6 +91,11 @@ APPAREIL = "ibm_marrakesh"
 TIRAGES = 1024
 CHAINES_VOULUES = 5
 DOSSIER = "runs/prediction"
+
+
+def etiquette(chaine):
+    """Sujet commun a une prediction et a son execution."""
+    return "chaine_" + "_".join(str(q) for q in chaine)
 
 
 def ghz():
@@ -155,34 +181,42 @@ def main() -> int:
     for cle, f in predictions.items():
         print(f"  {cle:>18} -> {100 * f:.2f} %")
 
-    # ---- 3 : sceller et faire dater ----
-    document = {
-        "appareil": APPAREIL,
-        "tirages": TIRAGES,
-        "modele": "multiplicatif sur operations exactes, calibration publiee",
-        "predictions": predictions,
-    }
-    empreinte = sha256_of(document)
-    print()
-    print("=== 2. SCELLEMENT ET HORODATAGE ===")
-    print(f"  empreinte des predictions : {empreinte}")
-    jeton = stamp(empreinte)
-    atteste = jeton.verify(empreinte)
-    print(f"  datee par l'autorite le   : {atteste.stamped_at}")
-    print("  Les tirages n'existent pas encore. Antidater ce jeton demanderait")
-    print("  la cle de l'autorite.")
-
+    # ---- 3 : inscrire CHAQUE prediction, puis dater la tete ----
     import pathlib
 
     pathlib.Path(DOSSIER).mkdir(parents=True, exist_ok=True)
-    pathlib.Path(f"{DOSSIER}/predictions.json").write_text(
-        canonical_json(document), encoding="utf-8"
-    )
-    jeton.save(f"{DOSSIER}/predictions.tsr")
+    journal = Journal()
+
+    print()
+    print("=== 2. INSCRIPTION DE CHAQUE PREDICTION ===")
+    for chaine in chaines:
+        sujet = etiquette(chaine)
+        journal.append(
+            {
+                "appareil": APPAREIL,
+                "chaine": list(chaine),
+                "tirages": TIRAGES,
+                "modele": "multiplicatif, operations exactes, calibration publiee",
+                "fidelite_predite": predictions[str(list(chaine))],
+            },
+            label=f"{sujet}.prediction",
+            kind="prediction",
+        )
+    journal.save(DOSSIER)
+    print(f"  {len(journal)} predictions inscrites, chainees")
+    print("  Aucune ne peut plus etre retiree : la chaine casserait.")
+
+    print()
+    print("=== 3. HORODATAGE DE LA TETE ===")
+    jeton = stamp(journal.head)
+    jeton.save(DOSSIER)
+    print(f"  tete : {journal.head[:48]}...")
+    print(f"  datee par l'autorite le : {jeton.verify(journal.head).stamped_at}")
+    print("  Les tirages n'existent pas encore. Un seul jeton date les cinq.")
 
     # ---- 4 : SEULEMENT MAINTENANT, executer ----
     print()
-    print("=== 3. EXECUTION, apres l'horodatage ===")
+    print("=== 4. EXECUTION, apres l'horodatage ===")
     print(f"{'chaine':>18} {'predit':>9} {'observe':>9} {'+/-':>7} {'ecart':>9}")
     print("-" * 56)
     observations = {}
@@ -190,6 +224,11 @@ def main() -> int:
         backend = IbmRuntimeBackend(appareil, initial_layout=list(chaine),
                                     optimization_level=0)
         run = capture(ghz(), backend=backend, seed=7, repetitions=TIRAGES)
+        sujet = etiquette(chaine)
+        record = RunRecord.from_capture(run)
+        record.save(f"{DOSSIER}/{sujet}")
+        journal.append(record, label=sujet, kind="execution")
+
         comptes = bitstring_counts(run.samples["m"])
         total = sum(comptes.values())
         f = (comptes.get(0, 0) + comptes.get(7, 0)) / total
@@ -198,6 +237,7 @@ def main() -> int:
         u = (f * (1 - f) / total) ** 0.5
         print(f"{str(list(chaine)):>18} {100 * p:8.2f}% {100 * f:8.2f}% "
               f"{100 * u:6.2f}% {100 * (f - p):+8.2f}")
+    journal.save(DOSSIER)
 
     # ---- 5 : verdict ----
     p = np.array([predictions[k] for k in predictions])
@@ -220,13 +260,29 @@ def main() -> int:
 
     print()
     print("=== 5. L'ORDRE EST-IL OPPOSABLE ? ===")
-    relu = Timestamp.load(f"{DOSSIER}/predictions.tsr")
-    controle = relu.verify(
-        sha256_of(json.loads(pathlib.Path(f"{DOSSIER}/predictions.json").read_text()))
-    )
-    print(f"  jeton lie aux predictions : {controle.bound}")
-    print(f"  emis le                   : {controle.stamped_at}")
-    print("  Modifier un seul chiffre predit casserait la liaison.")
+    relu = Journal.load(DOSSIER)
+    natures = [f"{e.index}:{e.kind[:4]}" for e in relu.entries]
+    print(f"  chaine : {' '.join(natures)}")
+    print("  Les cinq predictions precedent les cinq executions, et le")
+    print("  chainage l'etablit : aucune ne peut etre glissee apres coup.")
+
+    orphelines = relu.predictions_sans_execution()
+    print(f"  predictions sans execution : {len(orphelines)}")
+    if orphelines:
+        print(f"    {[e.label for e in orphelines]}")
+    else:
+        print("    aucune : rien n'a ete abandonne en route")
+
+    tete_datee = None
+    for entree in relu.entries:
+        if entree.kind == "prediction":
+            tete_datee = entree.entry_hash
+    jeton_relu = Timestamp.load(f"{DOSSIER}/journal.tsr")
+    controle = jeton_relu.verify(tete_datee)
+    print(f"  jeton lie a la tete des predictions : {controle.bound}")
+    print(f"  emis le                             : {controle.stamped_at}")
+    print("  Retirer une prediction ratee changerait cette tete, et le jeton")
+    print("  ne la couvrirait plus.")
 
     pathlib.Path(f"{DOSSIER}/observations.json").write_text(
         canonical_json(observations), encoding="utf-8"

@@ -281,6 +281,7 @@ def test_le_schema_est_dans_l_empreinte_des_entrees():
     entree = JournalEntry.build(
         index=0,
         label="x",
+        kind="execution",
         record_content_hash="a" * 64,
         recorded_at="2026-01-01T00:00:00+00:00",
         previous_hash=GENESE,
@@ -289,3 +290,92 @@ def test_le_schema_est_dans_l_empreinte_des_entrees():
         {"schema_version": JOURNAL_SCHEMA_VERSION}
     )
     assert entree.entry_hash == entree._compute_hash()
+
+
+# ---------- inscrire les PREDICTIONS ----------
+
+
+def test_une_prediction_s_inscrit_comme_les_executions(tmp_path):
+    """Le journal ne stocke pas les donnees, il s'engage dessus : un simple
+    dictionnaire suffit, son empreinte canonique fait foi."""
+    journal = Journal()
+    entree = journal.append(
+        {"fidelite_predite": 0.9847, "chaine": [4, 5, 6]},
+        label="essai.prediction",
+        kind="prediction",
+    )
+    assert entree.kind == "prediction"
+    assert len(entree.record_content_hash) == 64
+    assert journal.verify().intact
+
+
+def test_la_CHAINE_prouve_qu_une_prediction_precede_son_execution(tmp_path):
+    """LE point. Horodater une seule prediction ne prouve rien : on peut en
+    jeter dix et ne dater que la onzieme, celle qui s'est realisee.
+
+    Une entree ne peut pas etre glissee avant une autre apres coup. Inscrire la
+    prediction PUIS l'execution etablit donc l'ordre sans horodater chacune,
+    et un seul horodatage de la tete date toute la serie.
+    """
+    journal = Journal()
+    journal.append({"predit": 0.98}, label="run_a.prediction", kind="prediction")
+    journal.append(_archive(tmp_path, "run_a", graine=1), label="run_a")
+
+    entrees = journal.entries
+    assert entrees[0].kind == "prediction"
+    assert entrees[1].kind == "execution"
+    assert entrees[1].previous_hash == entrees[0].entry_hash, (
+        "l'execution suit la prediction, et le chainage le scelle"
+    )
+
+
+def test_une_prediction_ABANDONNEE_reste_visible(tmp_path):
+    """Le trou que ce champ ferme. Un predicteur qui n'inscrit que ses
+    reussites laisse desormais une trace de ses abandons : la prediction est
+    dans la chaine, son execution manque."""
+    journal = Journal()
+    journal.append({"predit": 0.98}, label="tenue.prediction", kind="prediction")
+    journal.append(_archive(tmp_path, "tenue", graine=1), label="tenue")
+    journal.append({"predit": 0.42}, label="ratee.prediction", kind="prediction")
+
+    orphelines = journal.predictions_sans_execution()
+    assert [e.label for e in orphelines] == ["ratee.prediction"]
+
+
+def test_les_predictions_ne_sont_pas_cherchees_sur_le_DISQUE(tmp_path):
+    """Une prediction est scellee par son empreinte, pas par une archive a
+    relire : `verify_records` ne doit pas la reclamer comme un dossier."""
+    journal = Journal()
+    journal.append({"predit": 0.98}, label="p.prediction", kind="prediction")
+    journal.append(_archive(tmp_path, "reel", graine=1), label="reel")
+    journal.save(tmp_path)
+
+    rapport = journal.verify_records(tmp_path)
+    assert rapport.intact, rapport.detail
+
+
+def test_une_entree_sans_nature_est_refusee(tmp_path):
+    journal = Journal()
+    with pytest.raises(ValueError, match="nature"):
+        journal.append({"x": 1}, label="a", kind="")
+
+
+def test_un_objet_ininscriptible_est_refuse_clairement():
+    journal = Journal()
+    with pytest.raises(TypeError, match="content_hash"):
+        journal.append("juste une chaine", label="a")
+
+
+def test_la_nature_entre_dans_l_empreinte_de_l_entree(tmp_path):
+    """Requalifier une execution en prediction apres coup casserait la chaine."""
+    a = JournalEntry.build(
+        index=0, label="x", kind="prediction",
+        record_content_hash="a" * 64,
+        recorded_at="2026-01-01T00:00:00+00:00", previous_hash=GENESE,
+    )
+    b = JournalEntry.build(
+        index=0, label="x", kind="execution",
+        record_content_hash="a" * 64,
+        recorded_at="2026-01-01T00:00:00+00:00", previous_hash=GENESE,
+    )
+    assert a.entry_hash != b.entry_hash

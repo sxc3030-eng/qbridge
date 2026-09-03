@@ -19,6 +19,16 @@ Supprimer, reordonner, inserer ou substituer une execution casse le chainage,
 et la tete du journal s'engage sur toute l'histoire. Signer la tete revient a
 signer la serie entiere.
 
+CE QU'ELLE PROUVE EN PLUS : L'ORDRE. Une entree ne peut pas etre glissee
+avant une autre apres coup. Inscrire une PREDICTION puis son EXECUTION prouve
+donc que la prediction precede — sans horodater chacune, la chaine suffit, et
+un seul horodatage de la tete date toute la serie.
+
+C'est ce qui ferme le dernier trou du pre-enregistrement. Horodater une seule
+prediction ne prouve rien : on peut en jeter dix et ne dater que la onzieme,
+celle qui s'est realisee. Inscrire TOUTES les predictions rend cet abandon
+visible — l'entree reste, et son execution manquante se voit.
+
 CE QU'ELLE NE FAIT PAS, ET IL FAUT LE DIRE. Elle ne prouve pas que la serie est
 COMPLETE. Une execution jamais inscrite n'y laisse aucune trace : on ne peut
 pas prouver l'absence d'un evenement dont rien n'a garde memoire. Ce que la
@@ -38,7 +48,7 @@ from typing import Any, Dict, List, Optional
 
 from qbridge.digest import canonical_json, sha256_of
 
-JOURNAL_SCHEMA_VERSION = "1.0"
+JOURNAL_SCHEMA_VERSION = "1.1"
 JOURNAL_FILENAME = "journal.json"
 
 GENESE = "0" * 64
@@ -52,6 +62,14 @@ class JournalEntry:
 
     index: int
     label: str
+    kind: str
+    """Ce que cette entree EST : « prediction », « execution », ou autre.
+
+    Sans ce champ, rien ne distingue un chiffre calcule AVANT de sa
+    verification APRES. Un calcul post-hoc pourrait se faire passer pour une
+    prediction, et c'est precisement l'abus que le pre-enregistrement existe
+    pour empecher.
+    """
     record_content_hash: str
     recorded_at: str
     previous_hash: str
@@ -63,6 +81,7 @@ class JournalEntry:
                 "schema_version": JOURNAL_SCHEMA_VERSION,
                 "index": self.index,
                 "label": self.label,
+                "kind": self.kind,
                 "record_content_hash": self.record_content_hash,
                 "recorded_at": self.recorded_at,
                 "previous_hash": self.previous_hash,
@@ -75,6 +94,7 @@ class JournalEntry:
         *,
         index: int,
         label: str,
+        kind: str,
         record_content_hash: str,
         recorded_at: str,
         previous_hash: str,
@@ -82,6 +102,7 @@ class JournalEntry:
         brut = cls(
             index=index,
             label=label,
+            kind=kind,
             record_content_hash=record_content_hash,
             recorded_at=recorded_at,
             previous_hash=previous_hash,
@@ -152,13 +173,24 @@ class Journal:
 
     # ---------- ecriture ----------
 
-    def append(self, record: Any, *, label: str) -> JournalEntry:
-        """Inscrit une execution a la suite.
+    def append(
+        self, record: Any, *, label: str, kind: str = "execution"
+    ) -> JournalEntry:
+        """Inscrit un document a la suite.
 
-        `record` est un `RunRecord` : on inscrit son hash de CONTENU, qui couvre
-        le manifeste et les tirages. Le journal ne duplique pas les donnees, il
-        s'engage dessus.
+        `record` est soit un objet portant `content_hash()` — un `RunRecord` —
+        soit un dictionnaire, auquel cas son hash canonique est calcule ici.
+        Le journal ne duplique jamais les donnees, il s'engage dessus.
+
+        `kind` dit ce que l'entree EST. Une prediction et son execution ne se
+        confondent pas : la premiere s'inscrit AVANT que la donnee existe, et
+        c'est tout ce qui lui donne sa valeur.
         """
+        if not kind:
+            raise ValueError(
+                "Une entree sans nature serait ambigue : rien ne distinguerait "
+                "un chiffre predit d'un chiffre verifie."
+            )
         if not label:
             raise ValueError(
                 "Une entree sans etiquette serait introuvable : le journal ne "
@@ -169,15 +201,44 @@ class Journal:
                 f"L'etiquette {label!r} est deja inscrite. Deux entrees de meme "
                 "nom rendraient la verification ambigue."
             )
+        if hasattr(record, "content_hash"):
+            empreinte = record.content_hash()
+        elif isinstance(record, dict):
+            empreinte = sha256_of(record)
+        else:
+            raise TypeError(
+                f"Un {type(record).__name__} ne peut pas etre inscrit : il faut "
+                "un objet portant `content_hash()` ou un dictionnaire."
+            )
         entree = JournalEntry.build(
             index=len(self._entries),
             label=label,
-            record_content_hash=record.content_hash(),
+            kind=kind,
+            record_content_hash=empreinte,
             recorded_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
             previous_hash=self.head or GENESE,
         )
         self._entries.append(entree)
         return entree
+
+    def par_nature(self, kind: str) -> List[JournalEntry]:
+        """Entrees d'une nature donnee, dans l'ordre du journal."""
+        return [e for e in self._entries if e.kind == kind]
+
+    def predictions_sans_execution(self) -> List[JournalEntry]:
+        """Predictions inscrites dont aucune execution ne porte le meme sujet.
+
+        Une prediction s'inscrit sous `<sujet>.prediction`, son execution sous
+        `<sujet>`. Une prediction orpheline signale une serie ABANDONNEE — le
+        cas exact que le pre-enregistrement doit rendre visible.
+        """
+        executions = {e.label for e in self._entries if e.kind == "execution"}
+        return [
+            e
+            for e in self._entries
+            if e.kind == "prediction"
+            and e.label.removesuffix(".prediction") not in executions
+        ]
 
     # ---------- verification ----------
 
@@ -253,6 +314,10 @@ class Journal:
         avertissements: List[str] = []
 
         for entree in self._entries:
+            if entree.kind != "execution":
+                # Une prediction n'est pas un dossier sur disque : elle est
+                # scellee par son empreinte, pas par une archive a relire.
+                continue
             dossier = racine / entree.label
             if not dossier.is_dir():
                 manquantes.append(entree.label)
