@@ -68,6 +68,32 @@ l'appareil.
 C'est le pre-enregistrement qui rend cette correction possible : les deux
 series etaient scellees et datees avant leurs donnees, donc aucune des deux ne
 peut etre ecartee comme « un mauvais jour ».
+
+TROISIEME SERIE : UNE PANNE PRISE EN DIRECT.
+
+    chaine [102, 103, 104] : predit 96.71 %, observe 83.69 %
+    ecart : -13.02 points, soit 11.3 sigma
+
+La meme chaine rendait 96.58 % quinze minutes plus tot. Ce n'est pas de la
+statistique, c'est une degradation de l'appareil. La calibration PUBLIEE, elle,
+annonce toujours 96.71 % : elle datait de deux heures.
+
+LA DISTRIBUTION LOCALISE LE DEFAUT. L'etat 101 capte 12.89 % du poids : c'est
+111 avec le qubit du MILIEU bascule — le physique 103, celui dont le T2 publie
+vaut 30.2 us, le plus faible des trois. Un seul qubit perd son etat une fois
+sur huit, et rien dans les chiffres publies ne le dit.
+
+CE QUE CETTE PANNE VALIDE. Le verdict rend INDETERMINE, avec l'age de la
+calibration en avertissement : 60.2 heures pour la mesure la plus vieille.
+Sans la correction du defaut 26 — seule la borne superieure peut accuser —
+cette archive parfaitement honnete aurait ete declaree IMPLAUSIBLE a
+23.4 sigma. La correction avait ete faite le matin sur un raisonnement
+physique ; voila le cas reel qu'elle evite.
+
+ET LE MODELE ? Sa correlation tombe a -0.05 sur cette serie, contre 0.87 et
+0.75 sur les deux precedentes. Un seul qubit en panne suffit a rendre le
+classement inutilisable. C'est la bonne lecon : le modele decrit une machine
+qui va bien, et il ne sait pas dire quand elle ne va plus.
 """
 
 from __future__ import annotations
@@ -185,12 +211,21 @@ def main() -> int:
     import pathlib
 
     pathlib.Path(DOSSIER).mkdir(parents=True, exist_ok=True)
-    journal = Journal()
+
+    # LE JOURNAL S'ACCUMULE. Chaque serie s'ajoute a la chaine existante au
+    # lieu de la remplacer : une serie decevante ne peut plus etre effacee
+    # pour ne garder que la suivante. C'est le meme raisonnement qu'au niveau
+    # d'une prediction seule, applique aux series entieres.
+    chemin_journal = pathlib.Path(DOSSIER) / "journal.json"
+    journal = Journal.load(chemin_journal) if chemin_journal.is_file() else Journal()
+    serie = len(journal.par_nature("prediction")) // len(chaines) + 1
 
     print()
-    print("=== 2. INSCRIPTION DE CHAQUE PREDICTION ===")
+    print(f"=== 2. INSCRIPTION DE CHAQUE PREDICTION (serie {serie}) ===")
+    if len(journal):
+        print(f"  {len(journal)} entrees deja dans la chaine, on s'y ajoute")
     for chaine in chaines:
-        sujet = etiquette(chaine)
+        sujet = f"s{serie}.{etiquette(chaine)}"
         journal.append(
             {
                 "appareil": APPAREIL,
@@ -224,7 +259,7 @@ def main() -> int:
         backend = IbmRuntimeBackend(appareil, initial_layout=list(chaine),
                                     optimization_level=0)
         run = capture(ghz(), backend=backend, seed=7, repetitions=TIRAGES)
-        sujet = etiquette(chaine)
+        sujet = f"s{serie}.{etiquette(chaine)}"
         record = RunRecord.from_capture(run)
         record.save(f"{DOSSIER}/{sujet}")
         journal.append(record, label=sujet, kind="execution")
@@ -261,8 +296,8 @@ def main() -> int:
     print()
     print("=== 5. L'ORDRE EST-IL OPPOSABLE ? ===")
     relu = Journal.load(DOSSIER)
-    natures = [f"{e.index}:{e.kind[:4]}" for e in relu.entries]
-    print(f"  chaine : {' '.join(natures)}")
+    natures = [f"{e.kind[:4]}" for e in relu.entries]
+    print(f"  {len(relu)} entrees : {' '.join(natures)}")
     print("  Les cinq predictions precedent les cinq executions, et le")
     print("  chainage l'etablit : aucune ne peut etre glissee apres coup.")
 
@@ -275,7 +310,7 @@ def main() -> int:
 
     tete_datee = None
     for entree in relu.entries:
-        if entree.kind == "prediction":
+        if entree.kind == "prediction" and entree.label.startswith(f"s{serie}."):
             tete_datee = entree.entry_hash
     jeton_relu = Timestamp.load(f"{DOSSIER}/journal.tsr")
     controle = jeton_relu.verify(tete_datee)
