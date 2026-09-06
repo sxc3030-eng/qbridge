@@ -476,3 +476,55 @@ def test_aucun_backend_ne_scelle_un_moteur_qu_il_n_utilise_PAS():
                 f"{nom} n'utilise pas qsim : sceller son noyau decrirait un "
                 "moteur qui n'a pas tourne"
             )
+
+
+def test_un_controle_classique_force_le_mode_MIDCIRCUIT():
+    """DEFAUT 33, trouve en faisant tourner un vrai branchement conditionnel.
+
+    `are_all_measurements_terminal()` de cirq rend True pour un circuit a
+    controle classique : chaque mesure EST la derniere operation sur SON qubit.
+    Mais le resultat de la premiere pilote une porte sur un AUTRE qubit — c'est
+    une mesure en cours de circuit, quoi qu'en dise la question posee a cirq.
+
+    CE QUE L'ERREUR COUTAIT. Le mode pilote la table des niveaux, et il est
+    MESURE que `cpu_threads` change les bitstrings en mode midcircuit. Classe
+    PERFORMANCE, il sortait du hash semantique : deux executions rendant des
+    resultats DIFFERENTS auraient porte le meme hash semantique. C'est
+    exactement ce que la table des niveaux existe pour empecher.
+    """
+    import cirq
+
+    from qbridge.modes import ExecutionMode, detect_mode
+    from qbridge.tiers import Tier, split_options
+
+    q = cirq.LineQubit.range(2)
+    avec = cirq.Circuit(
+        [
+            cirq.H(q[0]),
+            cirq.measure(q[0], key="a"),
+            cirq.X(q[1]).with_classical_controls("a"),
+            cirq.measure(q[1], key="b"),
+        ]
+    )
+    # Le piege : cirq considere ces mesures comme terminales.
+    assert avec.are_all_measurements_terminal()
+
+    mode = detect_mode(avec, repetitions=1024)
+    assert mode is ExecutionMode.MIDCIRCUIT_SAMPLING
+
+    parts = split_options({"cpu_threads": 4}, mode)
+    assert parts[Tier.SEMANTIC] == {"cpu_threads": 4}, (
+        "cpu_threads doit etre SEMANTIC ici : il est mesure qu'il change les "
+        "bitstrings dans ce mode"
+    )
+
+
+def test_sans_controle_classique_le_mode_ne_change_pas():
+    """La correction ne doit pas requalifier les circuits ordinaires."""
+    import cirq
+
+    from qbridge.modes import ExecutionMode, detect_mode
+
+    q = cirq.LineQubit.range(2)
+    simple = cirq.Circuit([cirq.H(q[0]), cirq.measure(*q, key="m")])
+    assert detect_mode(simple, repetitions=1024) is ExecutionMode.TERMINAL_SAMPLING
