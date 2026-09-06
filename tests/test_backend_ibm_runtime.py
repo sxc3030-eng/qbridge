@@ -95,9 +95,13 @@ def test_le_depaquetage_concorde_avec_les_comptages_de_qiskit(backend):
     assert depaquete.shape == (400, 3)
     assert depaquete.dtype == np.uint8
 
+    # La chaine de Qiskit est ecrite dans SA convention : son bit classique 0
+    # — le premier qubit de cirq — est le caractere de DROITE. On inverse donc
+    # nos colonnes pour comparer, au lieu de supposer les deux identiques.
+    # C'est exactement la supposition qui avait laisse passer le defaut 32.
     poids = 1 << np.arange(2, -1, -1, dtype=np.int64)
     miens = {}
-    for valeur in (depaquete.astype(np.int64) * poids).sum(axis=1):
+    for valeur in (depaquete[:, ::-1].astype(np.int64) * poids).sum(axis=1):
         miens[int(valeur)] = miens.get(int(valeur), 0) + 1
     ceux_de_qiskit = {int(k, 2): v for k, v in champ.get_counts().items()}
     assert miens == ceux_de_qiskit
@@ -402,3 +406,51 @@ def test_le_manifeste_reste_verifiable_avec_l_etat_scelle(backend, tmp_path):
     relu.manifest.verify_self()
     assert relu.manifest.calibration_json == run.manifest.calibration_json
     assert relu.manifest.content_hash == run.manifest.content_hash
+
+
+def test_l_ordre_des_qubits_survit_a_un_etat_ASYMETRIQUE(backend):
+    """DEFAUT 32. LE test qui manquait, et sans lequel rien ne pouvait voir.
+
+    Tous les circuits d'epreuve etaient des GHZ, dont les sorties `000` et
+    `111` sont des PALINDROMES : une inversion de l'ordre des bits y est
+    rigoureusement invisible. Le depaquetage rendait les colonnes dans l'ordre
+    de Qiskit, l'inverse de celui de cirq, et rien ne le signalait.
+
+    Il a fallu encoder un texte de 432 bits pour s'en apercevoir : 47 % de bits
+    justes — un tirage a pile ou face — la ou les erreurs de lecture declarees
+    promettaient 99 %.
+
+    Ce test prepare `100`, qui n'est PAS un palindrome. Une inversion le
+    transformerait en `001`.
+    """
+    q = cirq.LineQubit.range(3)
+    circuit = cirq.Circuit([cirq.X(q[0]), cirq.measure(*q, key="m")])
+
+    run = capture(circuit, backend=backend, seed=7, repetitions=200)
+    tirages = run.samples["m"]
+
+    frequences = tirages.mean(axis=0)
+    assert frequences[0] > 0.8, (
+        "le qubit 0 porte le X : il doit valoir 1 la plupart du temps. "
+        "S'il vaut 0, les colonnes sont inversees."
+    )
+    assert frequences[1] < 0.2
+    assert frequences[2] < 0.2
+
+
+def test_un_motif_de_bits_QUELCONQUE_revient_dans_le_bon_ordre(backend):
+    """Generalisation : un motif choisi pour n'avoir aucune symetrie."""
+    motif = [1, 1, 0, 1, 0]
+    q = cirq.LineQubit.range(len(motif))
+    circuit = cirq.Circuit(
+        [cirq.X(q[i]) for i, bit in enumerate(motif) if bit]
+        + [cirq.measure(*q, key="m")]
+    )
+    assert motif != motif[::-1], "un motif palindrome ne testerait rien"
+
+    run = capture(circuit, backend=backend, seed=7, repetitions=200)
+    majoritaire = (run.samples["m"].mean(axis=0) > 0.5).astype(int).tolist()
+    assert majoritaire == motif, (
+        f"attendu {motif}, obtenu {majoritaire} "
+        f"(inverse : {majoritaire[::-1]})"
+    )

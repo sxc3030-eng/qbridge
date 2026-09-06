@@ -145,12 +145,31 @@ class IbmRuntimeBackend:
     def _depaqueter(champ: Any) -> np.ndarray:
         """Bits empaquetes de Qiskit -> tableau (repetitions, n_qubits) uint8.
 
-        Qiskit rend des octets empaquetes ; qbridge attend un bit par colonne.
-        Le depaquetage a ete confronte aux comptages de Qiskit lui-meme sur un
-        GHZ : correspondance exacte.
+        La colonne `i` est le qubit `i` DE CIRQ, dans l'ordre ou la porte de
+        mesure les a nommes.
+
+        DEFAUT 32, ET POURQUOI IL A SURVECU SI LONGTEMPS. Cette methode rendait
+        les colonnes dans l'ordre de Qiskit, qui est l'INVERSE : son bit
+        classique 0 correspond au premier qubit de cirq, mais le depaquetage
+        MSB-first le place en DERNIERE colonne.
+
+        Le test qui validait ce code comparait aux comptages de Qiskit lui-meme
+        — il verifiait donc la coherence avec la convention de QISKIT, jamais
+        l'ordre des qubits de CIRQ. Et tous les circuits essayes jusque-la
+        etaient des GHZ, dont les sorties `000` et `111` sont des PALINDROMES :
+        aucune inversion ne pouvait s'y voir.
+
+        Il a fallu encoder un texte de 432 bits pour que ca saute aux yeux :
+        47 % de bits justes, soit un tirage a pile ou face, la ou les erreurs
+        de lecture declarees promettaient 99 %. En inversant : 98.8 %.
+
+        Consequence rassurante, verifiee et non supposee : aucune conclusion de
+        la journee ne change. Les etats analyses — 000, 111, 010, 101 — sont
+        tous des palindromes, par hasard et non par construction.
         """
         deplie = np.unpackbits(champ.array, axis=1, bitorder="big")
-        return deplie[:, -champ.num_bits :].astype(np.uint8)
+        octets = deplie[:, -champ.num_bits :]
+        return octets[:, ::-1].astype(np.uint8)
 
     # ---------- etat de l'appareil ----------
 
