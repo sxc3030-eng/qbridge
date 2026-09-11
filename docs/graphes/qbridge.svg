@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1120" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="fl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#5b6472"/>
+    </marker>
+    <marker id="fr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#c0504d"/>
+    </marker>
+    <marker id="fv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#3f8f5f"/>
+    </marker>
+    <marker id="fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#c98a1b"/>
+    </marker>
+    <marker id="fg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#7a8290"/>
+    </marker>
+    <marker id="fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#4a6fb0"/>
+    </marker>
+  </defs>
+
+  <rect width="900" height="1120" fill="#ffffff"/>
+  <text x="450" y="30" text-anchor="middle" font-size="17" font-weight="600" fill="#2b313b">qbridge — sceller une experience quantique, puis la verifier sans QPU</text>
+
+  <!-- __start__ -->
+  <rect x="395" y="50" width="110" height="30" rx="15" fill="#e6e8ec" stroke="#9aa1ac"/>
+  <text x="450" y="70" text-anchor="middle" font-size="13" fill="#3a404a">__start__</text>
+
+  <!-- capture -->
+  <line x1="450" y1="80" x2="450" y2="108" stroke="#5b6472" stroke-width="1.6" marker-end="url(#fl)"/>
+  <rect x="310" y="110" width="280" height="52" rx="8" fill="#e8f0fb" stroke="#4a6fb0" stroke-width="1.6"/>
+  <text x="450" y="132" text-anchor="middle" font-size="14" font-weight="600" fill="#24324d">capture</text>
+  <text x="450" y="151" text-anchor="middle" font-size="11.5" fill="#3d4a63">circuit, graine, placement, backend</text>
+
+  <!-- execution -->
+  <line x1="450" y1="162" x2="450" y2="188" stroke="#5b6472" stroke-width="1.6" marker-end="url(#fl)"/>
+  <rect x="310" y="190" width="280" height="52" rx="8" fill="#e8f0fb" stroke="#4a6fb0" stroke-width="1.6"/>
+  <text x="450" y="212" text-anchor="middle" font-size="14" font-weight="600" fill="#24324d">executer</text>
+  <text x="450" y="231" text-anchor="middle" font-size="11.5" fill="#3d4a63">qsim · cirq · ibm_marrakesh (156 qubits)</text>
+
+  <!-- sceller -->
+  <line x1="450" y1="242" x2="450" y2="268" stroke="#5b6472" stroke-width="1.6" marker-end="url(#fl)"/>
+  <rect x="270" y="270" width="360" height="70" rx="8" fill="#eef7ee" stroke="#3f8f5f" stroke-width="1.6"/>
+  <text x="450" y="292" text-anchor="middle" font-size="14" font-weight="600" fill="#1f4a2f">sceller le manifeste</text>
+  <text x="450" y="311" text-anchor="middle" font-size="11.5" fill="#35573f">etat d'appareil date · operations exactes par qubit</text>
+  <text x="450" y="327" text-anchor="middle" font-size="11.5" fill="#35573f">tirages bruts · hash semantique + hash de contenu</text>
+
+  <!-- journal -->
+  <line x1="450" y1="340" x2="450" y2="366" stroke="#5b6472" stroke-width="1.6" marker-end="url(#fl)"/>
+  <rect x="310" y="368" width="280" height="52" rx="8" fill="#eef7ee" stroke="#3f8f5f" stroke-width="1.6"/>
+  <text x="450" y="390" text-anchor="middle" font-size="14" font-weight="600" fill="#1f4a2f">inscrire au journal</text>
+  <text x="450" y="409" text-anchor="middle" font-size="11.5" fill="#35573f">chaque entree porte l'empreinte de la precedente</text>
+
+  <!-- horodater (optionnel) -->
+  <path d="M590 394 C 680 394, 700 394, 700 440" fill="none" stroke="#4a6fb0" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#fb)"/>
+  <text x="690" y="386" text-anchor="middle" font-size="11" fill="#4a6fb0">--stamp</text>
+  <rect x="600" y="442" width="200" height="52" rx="8" fill="#fdf5e6" stroke="#c98a1b" stroke-width="1.6"/>
+  <text x="700" y="464" text-anchor="middle" font-size="13.5" font-weight="600" fill="#5a3f0c">horodater la tete</text>
+  <text x="700" y="483" text-anchor="middle" font-size="11" fill="#6d5220">RFC 3161 · 32 octets sortent</text>
+
+  <!-- archive -->
+  <line x1="450" y1="420" x2="450" y2="498" stroke="#5b6472" stroke-width="1.6" marker-end="url(#fl)"/>
+  <path d="M700 494 C 700 525, 600 524, 592 524" fill="none" stroke="#4a6fb0" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#fb)"/>
+  <rect x="330" y="500" width="240" height="46" rx="23" fill="#f1f2f5" stroke="#7a8290" stroke-width="1.6"/>
+  <text x="450" y="528" text-anchor="middle" font-size="14" font-weight="600" fill="#2b313b">archive autoportante</text>
+
+  <text x="450" y="578" text-anchor="middle" font-size="11.5" font-style="italic" fill="#7a8290">— dans dix ans, sans aucune ressource quantique —</text>
+
+  <!-- integrite -->
+  <line x1="450" y1="546" x2="450" y2="596" stroke="#5b6472" stroke-width="1.6" marker-end="url(#fl)"/>
+  <rect x="310" y="598" width="280" height="52" rx="8" fill="#e8f0fb" stroke="#4a6fb0" stroke-width="1.6"/>
+  <text x="450" y="620" text-anchor="middle" font-size="14" font-weight="600" fill="#24324d">verifier l'integrite</text>
+  <text x="450" y="639" text-anchor="middle" font-size="11.5" fill="#3d4a63">hashes recalcules · signature detachee</text>
+
+  <path d="M310 624 C 200 624, 150 624, 150 690" fill="none" stroke="#c0504d" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#fr)"/>
+  <text x="215" y="614" text-anchor="middle" font-size="11" fill="#c0504d">octets modifies</text>
+  <rect x="70" y="692" width="160" height="44" rx="8" fill="#fbeaea" stroke="#c0504d" stroke-width="1.6"/>
+  <text x="150" y="719" text-anchor="middle" font-size="13.5" font-weight="600" fill="#6b1f1d">FALSIFIEE · 1</text>
+
+  <!-- plausibilite -->
+  <line x1="450" y1="650" x2="450" y2="696" stroke="#3f8f5f" stroke-width="1.6" marker-end="url(#fv)"/>
+  <text x="478" y="678" font-size="11" fill="#3f8f5f">intacte</text>
+  <rect x="290" y="698" width="320" height="52" rx="8" fill="#f3eefb" stroke="#7b5ab0" stroke-width="1.6"/>
+  <text x="450" y="720" text-anchor="middle" font-size="14" font-weight="600" fill="#35245a">plausibilite physique</text>
+  <text x="450" y="739" text-anchor="middle" font-size="11.5" fill="#4d3d6d">predit par l'appareil · borne F + (1-F)·|S|/2ⁿ</text>
+
+  <!-- quatre verdicts -->
+  <path d="M340 750 C 340 790, 130 790, 130 818" fill="none" stroke="#3f8f5f" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#fv)"/>
+  <path d="M410 750 C 410 790, 340 790, 340 818" fill="none" stroke="#c98a1b" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#fa)"/>
+  <path d="M490 750 C 490 790, 560 790, 560 818" fill="none" stroke="#7a8290" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#fg)"/>
+  <path d="M560 750 C 560 790, 770 790, 770 818" fill="none" stroke="#c0504d" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#fr)"/>
+
+  <rect x="45" y="820" width="170" height="64" rx="8" fill="#eef7ee" stroke="#3f8f5f" stroke-width="1.6"/>
+  <text x="130" y="843" text-anchor="middle" font-size="13" font-weight="600" fill="#1f4a2f">PLAUSIBLE</text>
+  <text x="130" y="861" text-anchor="middle" font-size="10.5" fill="#35573f">dans le domaine,</text>
+  <text x="130" y="875" text-anchor="middle" font-size="10.5" fill="#35573f">ecart &lt; 2 sigma</text>
+
+  <rect x="255" y="820" width="170" height="64" rx="8" fill="#fdf5e6" stroke="#c98a1b" stroke-width="1.6"/>
+  <text x="340" y="843" text-anchor="middle" font-size="13" font-weight="600" fill="#5a3f0c">TENSION</text>
+  <text x="340" y="861" text-anchor="middle" font-size="10.5" fill="#6d5220">moins bon que predit :</text>
+  <text x="340" y="875" text-anchor="middle" font-size="10.5" fill="#6d5220">jamais une accusation</text>
+
+  <rect x="475" y="820" width="170" height="64" rx="8" fill="#f1f2f5" stroke="#7a8290" stroke-width="1.6"/>
+  <text x="560" y="843" text-anchor="middle" font-size="13" font-weight="600" fill="#2b313b">INDETERMINE</text>
+  <text x="560" y="861" text-anchor="middle" font-size="10.5" fill="#4a515c">hors domaine, tirages</text>
+  <text x="560" y="875" text-anchor="middle" font-size="10.5" fill="#4a515c">non bruts, sans calibration</text>
+
+  <rect x="685" y="820" width="170" height="64" rx="8" fill="#fbeaea" stroke="#c0504d" stroke-width="1.6"/>
+  <text x="770" y="843" text-anchor="middle" font-size="13" font-weight="600" fill="#6b1f1d">IMPLAUSIBLE</text>
+  <text x="770" y="861" text-anchor="middle" font-size="10.5" fill="#7a2f2c">au-dessus de la borne :</text>
+  <text x="770" y="875" text-anchor="middle" font-size="10.5" fill="#7a2f2c">seul verdict qui accuse</text>
+
+  <!-- convergence -->
+  <path d="M130 884 C 130 930, 450 915, 450 948" fill="none" stroke="#5b6472" stroke-width="1.4"/>
+  <path d="M340 884 C 340 920, 450 920, 450 948" fill="none" stroke="#5b6472" stroke-width="1.4"/>
+  <path d="M560 884 C 560 920, 450 920, 450 948" fill="none" stroke="#5b6472" stroke-width="1.4"/>
+  <path d="M770 884 C 770 930, 450 915, 450 948" fill="none" stroke="#5b6472" stroke-width="1.4" marker-end="url(#fl)"/>
+
+  <rect x="290" y="950" width="320" height="52" rx="8" fill="#eef7ee" stroke="#3f8f5f" stroke-width="1.6"/>
+  <text x="450" y="972" text-anchor="middle" font-size="14" font-weight="600" fill="#1f4a2f">chaine et temoin exterieur</text>
+  <text x="450" y="991" text-anchor="middle" font-size="11.5" fill="#35573f">aucune archive absente · jeton lie a la tete</text>
+
+  <path d="M610 976 C 720 976, 770 976, 770 1030" fill="none" stroke="#c0504d" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#fr)"/>
+  <text x="705" y="966" text-anchor="middle" font-size="11" fill="#c0504d">rompue / non liee</text>
+  <rect x="680" y="1032" width="180" height="44" rx="8" fill="#fbeaea" stroke="#c0504d" stroke-width="1.6"/>
+  <text x="770" y="1059" text-anchor="middle" font-size="13" font-weight="600" fill="#6b1f1d">PUBLICATION SELECTIVE · 1</text>
+
+  <!-- __end__ -->
+  <line x1="450" y1="1002" x2="450" y2="1044" stroke="#3f8f5f" stroke-width="1.6" marker-end="url(#fv)"/>
+  <rect x="395" y="1046" width="110" height="30" rx="15" fill="#e6e8ec" stroke="#9aa1ac"/>
+  <text x="450" y="1066" text-anchor="middle" font-size="13" fill="#3a404a">__end__</text>
+
+  <text x="450" y="1106" text-anchor="middle" font-size="10.5" fill="#9aa1ac">qbridge v0.13 · 33 defauts trouves et corriges · github.com/sxc3030-eng/qbridge</text>
+</svg>
